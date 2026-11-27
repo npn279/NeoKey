@@ -714,7 +714,7 @@ extern "C" {
         if (AXUIElementCopyAttributeValue(focused, kAXSelectedTextRangeAttribute, &rangeRef) == kAXErrorSuccess && rangeRef != NULL) {
             if (CFGetTypeID(rangeRef) == AXValueGetTypeID()) {
                 CFRange cf = {0, 0};
-                if (AXValueGetValue((AXValueRef)rangeRef, kAXValueCFRangeType, &cf) && cf.location >= 0 && cf.length >= 0) {
+                if (AXValueGetValue((AXValueRef)rangeRef, kAXValueTypeCFRange, &cf) && cf.location >= 0 && cf.length >= 0) {
                     sel.location = (NSUInteger)cf.location;
                     sel.length = (NSUInteger)cf.length;
                 }
@@ -727,7 +727,7 @@ extern "C" {
         err = AXUIElementSetAttributeValue(focused, kAXValueAttribute, (__bridge CFTypeRef)updated);
         if (err == kAXErrorSuccess) {
             CFRange caret = CFRangeMake((CFIndex)newCaret, 0);
-            AXValueRef axCaret = AXValueCreate(kAXValueCFRangeType, &caret);
+            AXValueRef axCaret = AXValueCreate(kAXValueTypeCFRange, &caret);
             if (axCaret != NULL) {
                 AXUIElementSetAttributeValue(focused, kAXSelectedTextRangeAttribute, axCaret);
                 CFRelease(axCaret);
