@@ -72,7 +72,7 @@ impl Preferences {
     pub fn synchronize(&self) {
         // The replacement process reads these preferences as soon as it starts.
         if !self.defaults.synchronize() {
-            eprintln!("Could not synchronize NeoKeyRust preferences before relaunch");
+            eprintln!("Could not synchronize NeoKey preferences before relaunch");
         }
     }
 

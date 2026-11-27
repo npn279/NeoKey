@@ -1,7 +1,7 @@
 # OpenKey Change Log
 
 ##### Chưa phát hành
-- macOS: NeoKeyRust tự khởi động lại một lần khi được cấp quyền Trợ năng để gõ dấu trong Spotlight, Alfred và Raycast.
+- macOS: NeoKey (bản Rust) tự khởi động lại một lần khi được cấp quyền Trợ năng để gõ dấu trong Spotlight, Alfred và Raycast.
 - macOS 27: bản Rust và Objective-C nhận diện ô Spotlight của `com.apple.campo` khi cần xóa ký tự, sửa lỗi Telex gõ `oo` thành `oô`.
 
 ##### Version 2.0.6

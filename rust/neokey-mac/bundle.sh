@@ -3,7 +3,7 @@ set -eu
 
 workspace=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 target="$workspace/target"
-bundle="$target/NeoKeyRust.app"
+bundle="$target/NeoKey.app"
 
 cd "$workspace"
 cargo build --locked --release -p neokey-mac --target-dir "$target"

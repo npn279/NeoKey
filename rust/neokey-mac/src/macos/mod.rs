@@ -45,7 +45,7 @@ fn with_state<T>(action: impl FnOnce(&mut State) -> T) -> Option<T> {
 
 pub fn run() -> Result<(), &'static str> {
     autoreleasepool(|_| {
-        let mtm = MainThreadMarker::new().ok_or("NeoKeyRust requires the main thread")?;
+        let mtm = MainThreadMarker::new().ok_or("NeoKey requires the main thread")?;
         let trusted_at_launch = accessibility::is_trusted();
         let bundle_path = NSBundle::mainBundle()
             .bundleURL()
@@ -71,7 +71,7 @@ pub fn run() -> Result<(), &'static str> {
         let macro_data = preferences.data(ns_string!("macroData"));
         if typing.engine_mut().init_macros(&macro_data).is_err() {
             let _ = typing.engine_mut().init_macros(&[]);
-            eprintln!("NeoKeyRust skipped an unreadable macroData preference");
+            eprintln!("NeoKey skipped an unreadable macroData preference");
         }
         let mut smart_switch = SmartSwitch::default();
         if smart_switch
@@ -79,7 +79,7 @@ pub fn run() -> Result<(), &'static str> {
             .is_err()
         {
             smart_switch = SmartSwitch::default();
-            eprintln!("NeoKeyRust skipped an unreadable smartSwitchKey preference");
+            eprintln!("NeoKey skipped an unreadable smartSwitchKey preference");
         }
         STATE.with(|state| {
             state.replace(Some(State {
@@ -111,7 +111,7 @@ pub fn run() -> Result<(), &'static str> {
             } else {
                 accessibility::prompt_for_permission();
                 eprintln!(
-                    "Grant NeoKeyRust Accessibility access in System Settings to enable typing"
+                    "Grant NeoKey Accessibility access in System Settings to enable typing"
                 );
             }
         });
@@ -436,7 +436,7 @@ impl State {
     fn install_tap(&mut self) {
         self.tap = Tap::install();
         if self.tap.is_some() {
-            eprintln!("NeoKeyRust keyboard event tap installed");
+            eprintln!("NeoKey keyboard event tap installed");
         }
     }
 
@@ -460,10 +460,10 @@ impl State {
                 Ok(None) => return false,
                 Ok(Some(status)) if status.success() => return true,
                 Ok(Some(status)) => {
-                    eprintln!("Could not relaunch NeoKeyRust ({status}). Quit and reopen NeoKeyRust.");
+                    eprintln!("Could not relaunch NeoKey ({status}). Quit and reopen NeoKey.");
                 }
                 Err(error) => {
-                    eprintln!("Could not check NeoKeyRust relaunch ({error}). Quit and reopen NeoKeyRust.");
+                    eprintln!("Could not check NeoKey relaunch ({error}). Quit and reopen NeoKey.");
                 }
             }
             self.relaunch_child = None;
@@ -483,7 +483,7 @@ impl State {
                 Action::Wait => {}
                 Action::InstallTap => self.install_tap(),
                 Action::InstallTapAndRecommendRestart => {
-                    eprintln!("Restart NeoKeyRust for Spotlight, Alfred and Raycast support");
+                    eprintln!("Restart NeoKey for Spotlight, Alfred and Raycast support");
                     self.install_tap();
                 }
                 Action::Relaunch => {
@@ -493,7 +493,7 @@ impl State {
                         match relaunch_bundle(path) {
                             Ok(child) => self.relaunch_child = Some(child),
                             Err(error) => {
-                                eprintln!("Could not relaunch NeoKeyRust ({error}). Quit and reopen NeoKeyRust.");
+                                eprintln!("Could not relaunch NeoKey ({error}). Quit and reopen NeoKey.");
                             }
                         }
                     }

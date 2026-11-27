@@ -36,16 +36,16 @@ fi
 
 cd "$rust"
 cargo build --locked --release -p neokey-bench
-if [[ ! -x target/NeoKeyRust.app/Contents/MacOS/neokey-mac ]]; then
+if [[ ! -x target/NeoKey.app/Contents/MacOS/neokey-mac ]]; then
     ./neokey-mac/bundle.sh
 fi
 
 if rustup target list --installed | grep -qx x86_64-apple-darwin; then
     cargo build --locked --release -p neokey-mac --target x86_64-apple-darwin
-    bundle="$CARGO_TARGET_DIR/bench-universal/NeoKeyRust.app"
+    bundle="$CARGO_TARGET_DIR/bench-universal/NeoKey.app"
     mkdir -p "$bundle/Contents/MacOS"
-    install -m 644 target/NeoKeyRust.app/Contents/Info.plist "$bundle/Contents/Info.plist"
-    xcrun lipo -create target/NeoKeyRust.app/Contents/MacOS/neokey-mac \
+    install -m 644 target/NeoKey.app/Contents/Info.plist "$bundle/Contents/Info.plist"
+    xcrun lipo -create target/NeoKey.app/Contents/MacOS/neokey-mac \
         target/x86_64-apple-darwin/release/neokey-mac -output "$bundle/Contents/MacOS/neokey-mac"
     codesign --force --sign - "$bundle"
     codesign --verify --strict "$bundle"

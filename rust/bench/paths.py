@@ -13,8 +13,8 @@ SUPPLIED_OPENKEY = Path(
 )
 BUILT_OPENKEY = TARGET / "bench-xcode-universal/Build/Products/Release/OpenKey.app"
 CPP_ARM = TARGET / "bench-xcode-arm64/Build/Products/Release/OpenKey.app"
-RUST_ARM = TARGET / "NeoKeyRust.app"
-RUST_UNIVERSAL = TARGET / "bench-universal/NeoKeyRust.app"
+RUST_ARM = TARGET / "NeoKey.app"
+RUST_UNIVERSAL = TARGET / "bench-universal/NeoKey.app"
 
 
 def cpp_universal():

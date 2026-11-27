@@ -51,16 +51,16 @@ export PATH=/opt/homebrew/opt/rustup/bin:$PATH
 cargo build --release --workspace
 cargo test --workspace
 ./neokey-mac/bundle.sh
-open target/NeoKeyRust.app
+open target/NeoKey.app
 ```
 
-The script builds and ad-hoc signs `target/NeoKeyRust.app`. Grant NeoKeyRust access
+The script builds and ad-hoc signs `target/NeoKey.app`. Grant NeoKey access
 under **System Settings → Privacy & Security → Accessibility** when prompted. If
-you grant access while the app bundle is running, NeoKeyRust relaunches once so
+you grant access while the app bundle is running, NeoKey relaunches once so
 the new process can use Accessibility in Spotlight, Alfred and Raycast. The bare
 binary enables typing after permission is granted and logs a recommendation to
 restart it for launcher support. Disable other Vietnamese input methods while
-using NeoKeyRust so only one tool processes each key.
+using NeoKey so only one tool processes each key.
 
 Left-click the **V** or **E** status item to switch language. Right-click for
 Telex, VNI, Simple Telex 1/2, the five code tables, spell check and Quit. The

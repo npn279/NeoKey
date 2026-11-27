@@ -11,7 +11,7 @@
     <key>CFBundleIdentifier</key>
     <string>com.neokey.rust</string>
     <key>CFBundleName</key>
-    <string>NeoKeyRust</string>
+    <string>NeoKey</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

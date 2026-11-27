@@ -110,14 +110,14 @@ impl StatusMenu {
             NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         let button = status
             .button(mtm)
-            .ok_or("Cannot create NeoKeyRust menu bar button")?;
+            .ok_or("Cannot create NeoKey menu bar button")?;
         unsafe {
             button.setTarget(Some(target));
             button.setAction(Some(sel!(statusClicked:)));
         }
         button.sendActionOn(NSEventMask::LeftMouseUp | NSEventMask::RightMouseUp);
         button.setToolTip(Some(ns_string!(
-            "NeoKeyRust. Click to switch language. Right-click for settings."
+            "NeoKey. Click to switch language. Right-click for settings."
         )));
 
         let menu = NSMenu::new(mtm);
@@ -160,7 +160,7 @@ impl StatusMenu {
             mtm,
             &menu,
             target,
-            ns_string!("Quit NeoKeyRust"),
+            ns_string!("Quit NeoKey"),
             sel!(quitNeoKey:),
         );
         Ok(Self {
