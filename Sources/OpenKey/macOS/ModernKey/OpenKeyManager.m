@@ -7,6 +7,7 @@
 //
 
 #import "OpenKeyManager.h"
+#import <dispatch/dispatch.h>
 
 extern void OpenKeyInit(void);
 
@@ -21,14 +22,41 @@ extern NSString* ConvertUtil(NSString* str);
 
 @end
 
-@implementation OpenKeyManager {
-
-}
 static BOOL _isInited = NO;
 
 static CFMachPortRef      eventTap;
 static CGEventMask        eventMask;
 static CFRunLoopSourceRef runLoopSource;
+static dispatch_source_t  tapWatchdog;
+
+void OpenKeyEnsureEventTap(void) {
+    if (eventTap != NULL && !CGEventTapIsEnabled(eventTap)) {
+        CGEventTapEnable(eventTap, true);
+    }
+}
+
+static void startTapWatchdog(void) {
+    if (tapWatchdog != nil)
+        return;
+    tapWatchdog = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(tapWatchdog,
+                              dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
+                              NSEC_PER_SEC,
+                              200 * NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(tapWatchdog, ^{
+        OpenKeyEnsureEventTap();
+    });
+    dispatch_resume(tapWatchdog);
+}
+
+static void stopTapWatchdog(void) {
+    if (tapWatchdog == nil)
+        return;
+    dispatch_source_cancel(tapWatchdog);
+    tapWatchdog = nil;
+}
+
+@implementation OpenKeyManager
 
 +(BOOL)isInited {
     return _isInited;
@@ -73,12 +101,14 @@ static CFRunLoopSourceRef runLoopSource;
     
     // Enable the event tap.
     CGEventTapEnable(eventTap, true);
+    startTapWatchdog();
     
     return YES;
 }
 
 +(BOOL)stopEventTap {
     if (_isInited) { //release all object
+        stopTapWatchdog();
         CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, kCFRunLoopCommonModes);
         CFRelease(runLoopSource);
         runLoopSource = nil;
@@ -149,7 +179,7 @@ static CFRunLoopSourceRef runLoopSource;
 +(void)checkNewVersion:(NSWindow*)parent callbackFunc:(CheckNewVersionCallback) callback {
     //load new version config
     NSURLSession *aSession = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration defaultSessionConfiguration]];
-    [[aSession dataTaskWithURL:[NSURL URLWithString:@"https://raw.githubusercontent.com/tuyenvm/OpenKey/master/version.json"] completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+    [[aSession dataTaskWithURL:[NSURL URLWithString:@"https://raw.githubusercontent.com/npn279/NeoKey/main/version.json"] completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         if (((NSHTTPURLResponse *)response).statusCode == 200) {
             if (data) {
                 if(NSClassFromString(@"NSJSONSerialization")) {

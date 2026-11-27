@@ -8,11 +8,13 @@
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>
 #import <Foundation/Foundation.h>
+#import <ApplicationServices/ApplicationServices.h>
 #import "Engine.h"
 #import "AppDelegate.h"
 #import "ViewController.h"
 
-#define FRONT_APP [[NSWorkspace sharedWorkspace] frontmostApplication].bundleIdentifier
+/* Cached front app. Do not call NSWorkspace on the key path. */
+#define FRONT_APP _frontMostApp
 #define OTHER_CONTROL_KEY (_flag & kCGEventFlagMaskCommand) || (_flag & kCGEventFlagMaskControl) || \
                             (_flag & kCGEventFlagMaskAlternate) || (_flag & kCGEventFlagMaskSecondaryFn) || \
                             (_flag & kCGEventFlagMaskNumericPad) || (_flag & kCGEventFlagMaskHelp)
@@ -85,6 +87,13 @@ extern "C" {
     vector<Byte> savedSmartSwitchKeyData; ////use for smart switch key
     
     NSString* _frontMostApp = @"UnknownApp";
+    pid_t _cachedFrontPid = -1;
+    NSMutableDictionary *_bundleIdByPid = nil;
+
+    void queryFrontMostApp(void);
+    void refreshFrontAppFromEvent(CGEventRef event);
+    void OpenKeyEnsureEventTap(void);
+    static bool commitLauncherComposition(void);
     
     void OpenKeyInit() {
         //load saved data
@@ -142,6 +151,7 @@ extern "C" {
         if (convertToolHotKey == 0) {
             convertToolHotKey = EMPTY_HOTKEY;
         }
+        queryFrontMostApp();
     }
     
     void RequestNewSession() {
@@ -153,13 +163,48 @@ extern "C" {
         }
     }
     
-    void queryFrontMostApp() {
-        if ([[[NSWorkspace sharedWorkspace] frontmostApplication].bundleIdentifier compare:OPENKEY_BUNDLE] != 0) {
-            _frontMostApp = [[NSWorkspace sharedWorkspace] frontmostApplication].bundleIdentifier;
-            if (_frontMostApp == nil)
-                _frontMostApp = [[NSWorkspace sharedWorkspace] frontmostApplication].localizedName != nil ?
-                [[NSWorkspace sharedWorkspace] frontmostApplication].localizedName : @"UnknownApp";
+    static void rememberFrontApp(NSRunningApplication *app) {
+        if (app == nil)
+            return;
+        NSString *bid = app.bundleIdentifier;
+        if (bid == nil)
+            bid = app.localizedName != nil ? app.localizedName : @"UnknownApp";
+        pid_t pid = app.processIdentifier;
+        if (_bundleIdByPid == nil)
+            _bundleIdByPid = [[NSMutableDictionary alloc] init];
+        if (pid > 0) {
+            if (_bundleIdByPid.count > 128)
+                [_bundleIdByPid removeAllObjects];
+            _bundleIdByPid[@(pid)] = bid;
         }
+        if ([bid compare:OPENKEY_BUNDLE] == 0)
+            return;
+        _frontMostApp = bid;
+        if (pid > 0)
+            _cachedFrontPid = pid;
+    }
+
+    void queryFrontMostApp() {
+        rememberFrontApp([[NSWorkspace sharedWorkspace] frontmostApplication]);
+    }
+
+    void refreshFrontAppFromEvent(CGEventRef event) {
+        if (event == NULL)
+            return;
+        pid_t pid = (pid_t)CGEventGetIntegerValueField(event, kCGEventTargetUnixProcessID);
+        if (pid <= 0)
+            return;
+        if (pid == _cachedFrontPid && _frontMostApp != nil)
+            return;
+        NSString *cached = _bundleIdByPid[@(pid)];
+        if (cached != nil) {
+            if ([cached compare:OPENKEY_BUNDLE] != 0) {
+                _frontMostApp = cached;
+                _cachedFrontPid = pid;
+            }
+            return;
+        }
+        rememberFrontApp([NSRunningApplication runningApplicationWithProcessIdentifier:pid]);
     }
     
     NSString* ConvertUtil(NSString* str) {
@@ -175,26 +220,32 @@ extern "C" {
         return false;
     }
 
-    BOOL isSpotlightVisible() {
-        NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-                                                                        kCGNullWindowID));
-        for (NSDictionary *window in windows) {
-            if ([[window objectForKey:(__bridge NSString *)kCGWindowOwnerName] isEqualToString:@"Spotlight"]) {
-                return true;
-            }
+    BOOL isLauncherSearchApp(NSString* topApp) {
+        if (topApp == nil) return false;
+        if ([topApp isEqualToString:@"com.apple.Spotlight"] ||
+            [topApp hasPrefix:@"com.apple.Spotlight."] ||
+            [topApp isEqualToString:@"com.runningwithcrayons.Alfred"] ||
+            [topApp isEqualToString:@"com.runningwithcrayons.Alfred-3"] ||
+            [topApp hasPrefix:@"com.runningwithcrayons.Alfred."] ||
+            [topApp isEqualToString:@"com.raycast.macos"] ||
+            [topApp hasPrefix:@"com.raycast.macos."] ||
+            [topApp isEqualToString:@"Spotlight"] ||
+            [topApp isEqualToString:@"Alfred"] ||
+            [topApp isEqualToString:@"Raycast"]) {
+            return true;
         }
         return false;
     }
 
     BOOL shouldUseRecommendWorkaround(NSString* topApp) {
         if (!vFixRecommendBrowser) return false;
-        if (isSpotlightVisible()) return false;
+        if (isLauncherSearchApp(topApp)) return false;
         if (topApp == nil) return true;
         return ![_recommendWorkaroundDisabledApp containsObject:topApp];
     }
 
     BOOL shouldUseSelectionReplacement(NSString* topApp) {
-        return isSpotlightVisible() || [_recommendWorkaroundDisabledApp containsObject:topApp];
+        return isLauncherSearchApp(topApp);
     }
     
     void saveSmartSwitchKeyData() {
@@ -541,9 +592,190 @@ extern "C" {
         startNewSession();
     }
     
+    /* UTF-16 composition replace. Same arithmetic as tests/composition_replace.c. */
+    static NSString* stringByReplacingComposition(NSString* value, NSUInteger caret, NSUInteger selectionLength, NSUInteger deleteCount, NSString* replacement, NSUInteger* outCaret) {
+        if (value == nil)
+            value = @"";
+        if (replacement == nil)
+            replacement = @"";
+        if (caret > value.length)
+            caret = value.length;
+        if (selectionLength > value.length - caret)
+            selectionLength = value.length - caret;
+        if (deleteCount > caret)
+            deleteCount = caret;
+        NSUInteger start = caret - deleteCount;
+        NSUInteger replaceLen = deleteCount + selectionLength;
+        NSString* updated = [value stringByReplacingCharactersInRange:NSMakeRange(start, replaceLen) withString:replacement];
+        if (outCaret != NULL)
+            *outCaret = start + replacement.length;
+        return updated;
+    }
+
+    static void appendOutgoingUnit(UniChar* buf, int cap, int* len, vector<Uint8>* insertLens, Uint32 tempChar) {
+        if (*len >= cap)
+            return;
+        if (tempChar & PURE_CHARACTER_MASK) {
+            buf[(*len)++] = (UniChar)tempChar;
+            if (insertLens != NULL)
+                insertLens->push_back(1);
+            return;
+        }
+        if (!(tempChar & CHAR_CODE_MASK)) {
+            if (insertLens != NULL)
+                insertLens->push_back(1);
+            if (*len < cap)
+                buf[(*len)++] = keyCodeToCharacter(tempChar);
+            return;
+        }
+        if (vCodeTable == 0) {
+            buf[(*len)++] = (UniChar)tempChar;
+            return;
+        }
+        if (vCodeTable == 1 || vCodeTable == 2 || vCodeTable == 4) {
+            UniChar lo = (UniChar)LOBYTE(tempChar);
+            UniChar hi = (UniChar)HIBYTE(tempChar);
+            buf[(*len)++] = lo;
+            if (hi > 32) {
+                if (vCodeTable == 2 && insertLens != NULL)
+                    insertLens->push_back(2);
+                if (*len < cap)
+                    buf[(*len)++] = hi;
+            } else if (vCodeTable == 2 && insertLens != NULL) {
+                insertLens->push_back(1);
+            }
+            return;
+        }
+        if (vCodeTable == 3) {
+            UniChar ch = (UniChar)(tempChar & 0x1FFF);
+            UniChar mark = (UniChar)(tempChar >> 13);
+            if (insertLens != NULL)
+                insertLens->push_back(mark > 0 ? 2 : 1);
+            buf[(*len)++] = ch;
+            if (mark > 0 && *len < cap)
+                buf[(*len)++] = _unicodeCompoundMark[mark - 1];
+        }
+    }
+
+    static bool collectOutgoing(UniChar* buf, int cap, int* outLen, bool* sendControl, vector<Uint8>* insertLens) {
+        *outLen = 0;
+        *sendControl = false;
+        if (insertLens != NULL)
+            insertLens->clear();
+        if (pData->newCharCount > 0) {
+            for (int k = pData->newCharCount - 1; k >= 0; k--) {
+                if (*outLen >= cap)
+                    return false;
+                int before = *outLen;
+                appendOutgoingUnit(buf, cap, outLen, insertLens, pData->charData[k]);
+                if (*outLen == before && (pData->charData[k] & (PURE_CHARACTER_MASK | CHAR_CODE_MASK)))
+                    return false;
+                if (*outLen >= cap && k > 0)
+                    return false;
+            }
+        }
+        if (pData->code == vRestore || pData->code == vRestoreAndStartNewSession) {
+            Uint16 ch = keyCodeToCharacter(_keycode | (((_flag & kCGEventFlagMaskAlphaShift) || (_flag & kCGEventFlagMaskShift)) ? CAPS_MASK : 0));
+            if (ch != 0) {
+                if (*outLen >= cap)
+                    return false;
+                buf[(*outLen)++] = ch;
+            } else {
+                *sendControl = true;
+            }
+        }
+        return true;
+    }
+
+    static bool replaceFocusedComposition(NSString* replacement, NSUInteger deleteCount) {
+        AXUIElementRef systemWide = AXUIElementCreateSystemWide();
+        if (systemWide == NULL)
+            return false;
+        AXUIElementRef focused = NULL;
+        AXError err = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute, (CFTypeRef*)&focused);
+        CFRelease(systemWide);
+        if (err != kAXErrorSuccess || focused == NULL)
+            return false;
+        AXUIElementSetMessagingTimeout(focused, 0.08f);
+
+        CFTypeRef valueRef = NULL;
+        err = AXUIElementCopyAttributeValue(focused, kAXValueAttribute, &valueRef);
+        if (err != kAXErrorSuccess || valueRef == NULL || CFGetTypeID(valueRef) != CFStringGetTypeID()) {
+            if (valueRef != NULL)
+                CFRelease(valueRef);
+            CFRelease(focused);
+            return false;
+        }
+        NSString* value = [NSString stringWithString:(__bridge NSString*)valueRef];
+        CFRelease(valueRef);
+
+        NSRange sel = NSMakeRange(value.length, 0);
+        CFTypeRef rangeRef = NULL;
+        if (AXUIElementCopyAttributeValue(focused, kAXSelectedTextRangeAttribute, &rangeRef) == kAXErrorSuccess && rangeRef != NULL) {
+            if (CFGetTypeID(rangeRef) == AXValueGetTypeID()) {
+                CFRange cf = {0, 0};
+                if (AXValueGetValue((AXValueRef)rangeRef, kAXValueCFRangeType, &cf) && cf.location >= 0 && cf.length >= 0) {
+                    sel.location = (NSUInteger)cf.location;
+                    sel.length = (NSUInteger)cf.length;
+                }
+            }
+            CFRelease(rangeRef);
+        }
+
+        NSUInteger newCaret = 0;
+        NSString* updated = stringByReplacingComposition(value, sel.location, sel.length, deleteCount, replacement, &newCaret);
+        err = AXUIElementSetAttributeValue(focused, kAXValueAttribute, (__bridge CFTypeRef)updated);
+        if (err == kAXErrorSuccess) {
+            CFRange caret = CFRangeMake((CFIndex)newCaret, 0);
+            AXValueRef axCaret = AXValueCreate(kAXValueCFRangeType, &caret);
+            if (axCaret != NULL) {
+                AXUIElementSetAttributeValue(focused, kAXSelectedTextRangeAttribute, axCaret);
+                CFRelease(axCaret);
+            }
+        }
+        CFRelease(focused);
+        return err == kAXErrorSuccess;
+    }
+
+    static bool commitLauncherComposition(void) {
+        UniChar chars[MAX_BUFF * 2];
+        int len = 0;
+        bool sendControl = false;
+        vector<Uint8> inserts;
+        vector<Uint8>* insertLens = IS_DOUBLE_CODE(vCodeTable) ? &inserts : NULL;
+        if (!collectOutgoing(chars, MAX_BUFF * 2, &len, &sendControl, insertLens))
+            return false;
+        if (len == 0 && pData->backspaceCount == 0 && !sendControl)
+            return false;
+        NSString* replacement = [NSString stringWithCharacters:chars length:(NSUInteger)len];
+        if (!replaceFocusedComposition(replacement, pData->backspaceCount))
+            return false;
+        if (IS_DOUBLE_CODE(vCodeTable)) {
+            for (int i = 0; i < pData->backspaceCount && !_syncKey.empty(); i++)
+                _syncKey.pop_back();
+            for (size_t i = 0; i < inserts.size(); i++)
+                InsertKeyLength(inserts[i]);
+        }
+        if (pData->code == vRestoreAndStartNewSession)
+            startNewSession();
+        if (sendControl)
+            SendKeyCode(_keycode);
+        pData->backspaceCount = 0;
+        return true;
+    }
+
+    static void selectInsteadOfBackspace(void) {
+        if (pData->backspaceCount == 0)
+            return;
+        for (int i = 0; i < pData->backspaceCount; i++)
+            SendShiftAndLeftArrow();
+        pData->backspaceCount = 0;
+    }
+
     void handleMacro() {
-        //fix autocomplete
-        if (shouldUseRecommendWorkaround(FRONT_APP)) {
+        if (isLauncherSearchApp(FRONT_APP)) {
+            selectInsteadOfBackspace();
+        } else if (shouldUseRecommendWorkaround(FRONT_APP)) {
             SendEmptyCharacter();
             pData->backspaceCount++;
         }
@@ -598,11 +830,43 @@ extern "C" {
      * MAIN HOOK entry, very important function.
      * MAIN Callback.
      */
+    static bool cachedOtherLanguageBlocksVietnamese(void) {
+        if (!vOtherLanguage)
+            return false;
+        static CFAbsoluteTime checkedAt = 0;
+        static bool blocked = false;
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        if (now - checkedAt < 0.3)
+            return blocked;
+        checkedAt = now;
+        blocked = false;
+        TISInputSourceRef isource = TISCopyCurrentKeyboardInputSource();
+        if (isource == NULL)
+            return false;
+        CFArrayRef languages = (CFArrayRef)TISGetInputSourceProperty(isource, kTISPropertyInputSourceLanguages);
+        if (languages != NULL && CFArrayGetCount(languages) > 0) {
+            CFStringRef langRef = (CFStringRef)CFArrayGetValueAtIndex(languages, 0);
+            NSString* currentLanguage = (__bridge NSString*)langRef;
+            if (currentLanguage != nil && ![currentLanguage hasPrefix:@"en"])
+                blocked = true;
+        }
+        CFRelease(isource);
+        return blocked;
+    }
+
     CGEventRef OpenKeyCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
+        if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+            OpenKeyEnsureEventTap();
+            return NULL;
+        }
+        if (event == NULL)
+            return NULL;
+
         //dont handle my event
         if (CGEventGetIntegerValueField(event, kCGEventSourceStateID) == CGEventSourceGetSourceStateID(myEventSource)) {
             return event;
         }
+        refreshFrontAppFromEvent(event);
         
         _flag = CGEventGetFlags(event);
         _keycode = (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
@@ -691,23 +955,8 @@ extern "C" {
         }
 
         //if "turn off Vietnamese when in other language" mode on
-        if(vOtherLanguage){
-            TISInputSourceRef isource = TISCopyCurrentKeyboardInputSource();
-            if ( isource != NULL )
-            {
-                CFArrayRef languages = (CFArrayRef) TISGetInputSourceProperty(isource, kTISPropertyInputSourceLanguages);
-                
-                if (CFArrayGetCount(languages) > 0) {
-                    CFStringRef langRef = (CFStringRef)CFArrayGetValueAtIndex(languages, 0);
-                    NSString *currentLanguage = (__bridge NSString *)langRef;
-                    if(![currentLanguage isLike:@"en"]){
-                        return event;
-                    }
-                    CFRelease(langRef);
-                    CFRelease(isource);
-                }
-            }
-        }
+        if (cachedOtherLanguageBlocksVietnamese())
+            return event;
         
         //handle keyboard
         if (type == kCGEventKeyDown) {
@@ -738,8 +987,12 @@ extern "C" {
                 return event;
             } else if (pData->code == vWillProcess || pData->code == vRestore || pData->code == vRestoreAndStartNewSession) { //handle result signal
                 
-                //fix autocomplete
-                if (shouldUseRecommendWorkaround(FRONT_APP) && pData->extCode != 4) {
+                if (isLauncherSearchApp(FRONT_APP)) {
+                    if (commitLauncherComposition())
+                        return NULL;
+                    selectInsteadOfBackspace();
+                } else if (shouldUseRecommendWorkaround(FRONT_APP) && pData->extCode != 4) {
+                    //fix autocomplete
                     if (vFixChromiumBrowser && [_unicodeCompoundApp containsObject:FRONT_APP]) {
                         if (pData->backspaceCount > 0) {
                             SendShiftAndLeftArrow();
@@ -749,15 +1002,7 @@ extern "C" {
                     } else {
                         SendEmptyCharacter();
                         pData->backspaceCount++;
-                    
                     }
-                }
-
-                if (shouldUseSelectionReplacement(FRONT_APP) && pData->backspaceCount > 0) {
-                    for (_i = 0; _i < pData->backspaceCount; _i++) {
-                        SendShiftAndLeftArrow();
-                    }
-                    pData->backspaceCount = 0;
                 }
                 
                 //send backspace

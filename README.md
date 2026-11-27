@@ -1,5 +1,9 @@
 
 # [OpenKey](http://open-key.org)
+
+Bản fork này nằm ở [npn279/NeoKey](https://github.com/npn279/NeoKey), giữ giấy phép GPL-3.0 của OpenKey (Tuyen Mai). Bản **2.0.6** sửa lag khi bật tiếng Việt và lỗi gõ `ồ` thành `oồ` trên Spotlight, Alfred và Raycast. Xem [FIXES.md](FIXES.md).
+
+App native macOS: mở `Sources/OpenKey/macOS/OpenKey.xcodeproj` bằng Xcode trên Mac, Product → Archive. Cloud Agent chạy Linux nên không build được bản này.
 ### [Download bản mới nhất](https://github.com/tuyenvm/OpenKey/releases)
 [![GitHub release](https://img.shields.io/github/v/release/tuyenvm/OpenKey.svg)](https://github.com/tuyenvm/OpenKey/releases/latest)
 

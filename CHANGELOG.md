@@ -1,5 +1,10 @@
 # OpenKey Change Log
 
+##### Version 2.0.6
+- macOS: không hỏi app đang focus trên mỗi phím; nhớ bundle id theo PID của event.
+- macOS: tự bật lại CGEventTap khi hệ thống tắt tap vì timeout, kèm watchdog.
+- macOS: Spotlight, Alfred và Raycast ghi chữ có dấu bằng Accessibility; nếu không được thì Shift+Left thay cho Backspace, để `ồ` không thành `oồ`.
+
 ##### OpenKey for Linux: (in development)
 
 ##### Version 1.2 RC5: (26/08/2019)
