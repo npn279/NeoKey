@@ -1,0 +1,40 @@
+2026-11-27 22:27:01.411 neokey-bench[6362:4097084] Error received in message reply handler: Connection invalid
+2026-11-27 22:27:01.411 neokey-bench[6362:4097106] Connection Invalid error for service com.apple.hiservices-xpcservice.
+engine telex-text-spell0-macro0 (858 keys per trial)
+engine telex-text-spell1-macro0 (858 keys per trial)
+engine telex-text-spell0-macro1 (858 keys per trial)
+engine telex-text-spell1-macro1 (858 keys per trial)
+Preparing synthetic events for telex-text
+Validating callback telex-text-batch
+callback telex-text-batch (858 keys per trial)
+Validating callback telex-text-step
+callback telex-text-step (858 keys per trial)
+engine telex-random-spell0-macro0 (2048 keys per trial)
+engine telex-random-spell1-macro0 (2048 keys per trial)
+engine telex-random-spell0-macro1 (2048 keys per trial)
+engine telex-random-spell1-macro1 (2048 keys per trial)
+Preparing synthetic events for telex-random
+Validating callback telex-random-batch
+First reconstructed screen difference at input 254 (virtual key 49, flags 0x10000): OpenKey "F-xCf.*en/\\#rx6xo<e; hcnx0y=isg\0", NeoKeyRust "F-xCf.*en/\\#rx6xo<e; hcnx0y=isg "
+callback telex-random-batch (2026 keys per trial)
+Validating callback telex-random-step
+callback telex-random-step (2026 keys per trial)
+engine vni-text-spell0-macro0 (858 keys per trial)
+engine vni-text-spell1-macro0 (858 keys per trial)
+engine vni-text-spell0-macro1 (858 keys per trial)
+engine vni-text-spell1-macro1 (858 keys per trial)
+Preparing synthetic events for vni-text
+Validating callback vni-text-batch
+callback vni-text-batch (858 keys per trial)
+Validating callback vni-text-step
+callback vni-text-step (858 keys per trial)
+engine vni-random-spell0-macro0 (2048 keys per trial)
+engine vni-random-spell1-macro0 (2048 keys per trial)
+engine vni-random-spell0-macro1 (2048 keys per trial)
+engine vni-random-spell1-macro1 (2048 keys per trial)
+Preparing synthetic events for vni-random
+Validating callback vni-random-batch
+First reconstructed screen difference at input 39 (virtual key 49, flags 0x10000): OpenKey "ift2\\ s03p]rM8v46)oM1jsi]^5S0b4\0", NeoKeyRust "ift2\\ s03p]rM8v46)oM1jsi]^5S0b4 "
+callback vni-random-batch (2026 keys per trial)
+Validating callback vni-random-step
+callback vni-random-step (2026 keys per trial)

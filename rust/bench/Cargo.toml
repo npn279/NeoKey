@@ -1,0 +1,17 @@
+[package]
+name = "neokey-bench"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+
+[dependencies]
+engine-diff = { path = "../engine-diff" }
+neokey-engine = { path = "../neokey-engine" }
+neokey-mac = { path = "../neokey-mac" }
+objc2 = "=0.6.5"
+objc2-application-services = "=0.3.2"
+objc2-core-foundation = "=0.3.2"
+objc2-core-graphics = "=0.3.2"
+
+[build-dependencies]
+cc = "1"
