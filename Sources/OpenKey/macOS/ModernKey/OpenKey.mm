@@ -93,7 +93,6 @@ extern "C" {
     void queryFrontMostApp(void);
     void refreshFrontAppFromEvent(CGEventRef event);
     void OpenKeyEnsureEventTap(void);
-    static bool commitLauncherComposition(void);
     
     void OpenKeyInit() {
         //load saved data
@@ -163,9 +162,9 @@ extern "C" {
         }
     }
     
-    static void rememberFrontApp(NSRunningApplication *app) {
+    static NSString *cacheAppBundle(NSRunningApplication *app) {
         if (app == nil)
-            return;
+            return nil;
         NSString *bid = app.bundleIdentifier;
         if (bid == nil)
             bid = app.localizedName != nil ? app.localizedName : @"UnknownApp";
@@ -177,7 +176,16 @@ extern "C" {
                 [_bundleIdByPid removeAllObjects];
             _bundleIdByPid[@(pid)] = bid;
         }
-        if ([bid compare:OPENKEY_BUNDLE] == 0)
+        return bid;
+    }
+
+    static NSString *bundleForPid(pid_t pid) {
+        NSString *cached = _bundleIdByPid[@(pid)];
+        return cached ?: cacheAppBundle([NSRunningApplication runningApplicationWithProcessIdentifier:pid]);
+    }
+
+    static void rememberFrontApp(NSString *bid, pid_t pid) {
+        if (bid == nil || [bid isEqualToString:OPENKEY_BUNDLE])
             return;
         _frontMostApp = bid;
         if (pid > 0)
@@ -185,7 +193,8 @@ extern "C" {
     }
 
     void queryFrontMostApp() {
-        rememberFrontApp([[NSWorkspace sharedWorkspace] frontmostApplication]);
+        NSRunningApplication *app = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        rememberFrontApp(cacheAppBundle(app), app.processIdentifier);
     }
 
     void refreshFrontAppFromEvent(CGEventRef event) {
@@ -196,15 +205,7 @@ extern "C" {
             return;
         if (pid == _cachedFrontPid && _frontMostApp != nil)
             return;
-        NSString *cached = _bundleIdByPid[@(pid)];
-        if (cached != nil) {
-            if ([cached compare:OPENKEY_BUNDLE] != 0) {
-                _frontMostApp = cached;
-                _cachedFrontPid = pid;
-            }
-            return;
-        }
-        rememberFrontApp([NSRunningApplication runningApplicationWithProcessIdentifier:pid]);
+        rememberFrontApp(bundleForPid(pid), pid);
     }
     
     NSString* ConvertUtil(NSString* str) {
@@ -224,6 +225,8 @@ extern "C" {
         if (topApp == nil) return false;
         if ([topApp isEqualToString:@"com.apple.Spotlight"] ||
             [topApp hasPrefix:@"com.apple.Spotlight."] ||
+            [topApp isEqualToString:@"com.apple.campo"] ||
+            [topApp hasPrefix:@"com.apple.campo."] ||
             [topApp isEqualToString:@"com.runningwithcrayons.Alfred"] ||
             [topApp isEqualToString:@"com.runningwithcrayons.Alfred-3"] ||
             [topApp hasPrefix:@"com.runningwithcrayons.Alfred."] ||
@@ -432,7 +435,7 @@ extern "C" {
         }
     }
     
-    void SendShiftAndLeftArrow() {
+    static void postShiftAndLeftArrow(bool repeat) {
         CGEventRef eventVkeyDown = CGEventCreateKeyboardEvent (myEventSource, KEY_LEFT, true);
         CGEventRef eventVkeyUp = CGEventCreateKeyboardEvent (myEventSource, KEY_LEFT, false);
         _privateFlag = CGEventGetFlags(eventVkeyDown);
@@ -443,17 +446,22 @@ extern "C" {
         CGEventTapPostEvent(_proxy, eventVkeyDown);
         CGEventTapPostEvent(_proxy, eventVkeyUp);
         
-        if (IS_DOUBLE_CODE(vCodeTable)) { //VNI or Unicode Compound
-            if (_syncKey.back() > 1) {
-                if (!(vCodeTable == 3 && containUnicodeCompoundApp(FRONT_APP))) {
-                    CGEventTapPostEvent(_proxy, eventVkeyDown);
-                    CGEventTapPostEvent(_proxy, eventVkeyUp);
-                }
-            }
-            _syncKey.pop_back();
+        if (repeat) {
+            CGEventTapPostEvent(_proxy, eventVkeyDown);
+            CGEventTapPostEvent(_proxy, eventVkeyUp);
         }
         CFRelease(eventVkeyDown);
         CFRelease(eventVkeyUp);
+    }
+
+    void SendShiftAndLeftArrow(bool launcher = false) {
+        bool repeat = false;
+        if (IS_DOUBLE_CODE(vCodeTable) && !_syncKey.empty()) {
+            repeat = _syncKey.back() > 1 &&
+                (vCodeTable == 2 || !(launcher || containUnicodeCompoundApp(FRONT_APP)));
+            _syncKey.pop_back();
+        }
+        postShiftAndLeftArrow(repeat);
     }
     
     void SendCutKey() {
@@ -662,7 +670,15 @@ extern "C" {
         *sendControl = false;
         if (insertLens != NULL)
             insertLens->clear();
-        if (pData->newCharCount > 0) {
+        if (pData->code == vReplaceMaro) {
+            for (Uint32 unit : pData->macroData) {
+                if (cap - *outLen < 2)
+                    return false;
+                if (!(unit & (PURE_CHARACTER_MASK | CHAR_CODE_MASK)) && keyCodeToCharacter(unit) == 0)
+                    return false;
+                appendOutgoingUnit(buf, cap, outLen, insertLens, unit);
+            }
+        } else if (pData->newCharCount > 0) {
             for (int k = pData->newCharCount - 1; k >= 0; k--) {
                 if (*outLen >= cap)
                     return false;
@@ -687,23 +703,44 @@ extern "C" {
         return true;
     }
 
-    static bool replaceFocusedComposition(NSString* replacement, NSUInteger deleteCount) {
+    static bool launcherForDeletion(NSUInteger deleteCount, AXUIElementRef *launcher) {
+        *launcher = NULL;
+        if (deleteCount == 0)
+            return false;
+        // Spotlight can own focus without becoming the event target or frontmost app.
         AXUIElementRef systemWide = AXUIElementCreateSystemWide();
         if (systemWide == NULL)
-            return false;
+            return isLauncherSearchApp(FRONT_APP);
         AXUIElementRef focused = NULL;
-        AXError err = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute, (CFTypeRef*)&focused);
+        AXError err = AXUIElementSetMessagingTimeout(systemWide, 0.08f);
+        if (err == kAXErrorSuccess)
+            err = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute, (CFTypeRef*)&focused);
         CFRelease(systemWide);
-        if (err != kAXErrorSuccess || focused == NULL)
+        NSString *bundle = nil;
+        pid_t pid = 0;
+        if (err == kAXErrorSuccess && focused != NULL &&
+            CFGetTypeID(focused) == AXUIElementGetTypeID() &&
+            AXUIElementGetPid(focused, &pid) == kAXErrorSuccess && pid > 0) {
+            bundle = bundleForPid(pid);
+        }
+        if (isLauncherSearchApp(bundle)) {
+            *launcher = focused;
+            return true;
+        }
+        if (focused != NULL)
+            CFRelease(focused);
+        return bundle == nil && isLauncherSearchApp(FRONT_APP);
+    }
+
+    static bool replaceFocusedComposition(AXUIElementRef focused, NSString* replacement, NSUInteger deleteCount) {
+        if (AXUIElementSetMessagingTimeout(focused, 0.08f) != kAXErrorSuccess)
             return false;
-        AXUIElementSetMessagingTimeout(focused, 0.08f);
 
         CFTypeRef valueRef = NULL;
-        err = AXUIElementCopyAttributeValue(focused, kAXValueAttribute, &valueRef);
+        AXError err = AXUIElementCopyAttributeValue(focused, kAXValueAttribute, &valueRef);
         if (err != kAXErrorSuccess || valueRef == NULL || CFGetTypeID(valueRef) != CFStringGetTypeID()) {
             if (valueRef != NULL)
                 CFRelease(valueRef);
-            CFRelease(focused);
             return false;
         }
         NSString* value = [NSString stringWithString:(__bridge NSString*)valueRef];
@@ -733,11 +770,12 @@ extern "C" {
                 CFRelease(axCaret);
             }
         }
-        CFRelease(focused);
         return err == kAXErrorSuccess;
     }
 
-    static bool commitLauncherComposition(void) {
+    static bool commitLauncherComposition(AXUIElementRef focused) {
+        if (focused == NULL)
+            return false;
         UniChar chars[MAX_BUFF * 2];
         int len = 0;
         bool sendControl = false;
@@ -748,7 +786,13 @@ extern "C" {
         if (len == 0 && pData->backspaceCount == 0 && !sendControl)
             return false;
         NSString* replacement = [NSString stringWithCharacters:chars length:(NSUInteger)len];
-        if (!replaceFocusedComposition(replacement, pData->backspaceCount))
+        NSUInteger deleteCount = pData->backspaceCount;
+        if (IS_DOUBLE_CODE(vCodeTable)) {
+            auto width = _syncKey.rbegin();
+            for (int i = 0; i < pData->backspaceCount && width != _syncKey.rend(); i++, ++width)
+                deleteCount += *width - 1;
+        }
+        if (!replaceFocusedComposition(focused, replacement, deleteCount))
             return false;
         if (IS_DOUBLE_CODE(vCodeTable)) {
             for (int i = 0; i < pData->backspaceCount && !_syncKey.empty(); i++)
@@ -768,12 +812,20 @@ extern "C" {
         if (pData->backspaceCount == 0)
             return;
         for (int i = 0; i < pData->backspaceCount; i++)
-            SendShiftAndLeftArrow();
+            SendShiftAndLeftArrow(true);
         pData->backspaceCount = 0;
     }
 
     void handleMacro() {
-        if (isLauncherSearchApp(FRONT_APP)) {
+        AXUIElementRef launcher = NULL;
+        if (launcherForDeletion(pData->backspaceCount, &launcher)) {
+            bool committed = commitLauncherComposition(launcher);
+            if (launcher != NULL)
+                CFRelease(launcher);
+            if (committed) {
+                SendKeyCode(_keycode | (_flag & kCGEventFlagMaskShift ? CAPS_MASK : 0));
+                return;
+            }
             selectInsteadOfBackspace();
         } else if (shouldUseRecommendWorkaround(FRONT_APP)) {
             SendEmptyCharacter();
@@ -973,9 +1025,20 @@ extern "C" {
                     } else if (pData->extCode == 2) { //delete key
                         if (_syncKey.size() > 0) {
                             if (_syncKey.back() > 1 && (vCodeTable == 2 || !containUnicodeCompoundApp(FRONT_APP))) {
-                                //send one more backspace
-                                CGEventTapPostEvent(_proxy, eventBackSpaceDown);
-                                CGEventTapPostEvent(_proxy, eventBackSpaceUp);
+                                AXUIElementRef launcher = NULL;
+                                if (launcherForDeletion(1, &launcher)) {
+                                    // Launchers delete compound Unicode as one grapheme.
+                                    if (vCodeTable == 2 &&
+                                        (launcher == NULL || !replaceFocusedComposition(launcher, @"", 1))) {
+                                        // The physical Backspace deletes the resulting selection.
+                                        postShiftAndLeftArrow(true);
+                                    }
+                                    if (launcher != NULL)
+                                        CFRelease(launcher);
+                                } else {
+                                    CGEventTapPostEvent(_proxy, eventBackSpaceDown);
+                                    CGEventTapPostEvent(_proxy, eventBackSpaceUp);
+                                }
                             }
                             _syncKey.pop_back();
                         }
@@ -987,8 +1050,12 @@ extern "C" {
                 return event;
             } else if (pData->code == vWillProcess || pData->code == vRestore || pData->code == vRestoreAndStartNewSession) { //handle result signal
                 
-                if (isLauncherSearchApp(FRONT_APP)) {
-                    if (commitLauncherComposition())
+                AXUIElementRef launcher = NULL;
+                if (launcherForDeletion(pData->backspaceCount, &launcher)) {
+                    bool committed = commitLauncherComposition(launcher);
+                    if (launcher != NULL)
+                        CFRelease(launcher);
+                    if (committed)
                         return NULL;
                     selectInsteadOfBackspace();
                 } else if (shouldUseRecommendWorkaround(FRONT_APP) && pData->extCode != 4) {

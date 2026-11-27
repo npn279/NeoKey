@@ -1,5 +1,8 @@
 # OpenKey Change Log
 
+##### Chưa phát hành
+- macOS 27: bản Rust và Objective-C nhận diện ô Spotlight của `com.apple.campo` khi cần xóa ký tự, sửa lỗi Telex gõ `oo` thành `oô`.
+
 ##### Version 2.0.6
 - macOS: không hỏi app đang focus trên mỗi phím; nhớ bundle id theo PID của event.
 - macOS: tự bật lại CGEventTap khi hệ thống tắt tap vì timeout, kèm watchdog.

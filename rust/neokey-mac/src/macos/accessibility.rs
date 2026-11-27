@@ -38,26 +38,34 @@ impl LauncherAccessibility {
         }
     }
 
-    pub fn replace(&self, pid: i32, delete: usize, replacement: &[u16]) -> bool {
-        self.try_replace(pid, delete, replacement).is_some()
-    }
-
-    fn try_replace(&self, pid: i32, delete: usize, replacement: &[u16]) -> Option<()> {
-        // Query the event's target, so a focus change cannot redirect an edit to another app.
-        let application = unsafe { AXUIElement::new_application(pid) };
-        if unsafe { application.set_messaging_timeout(TIMEOUT) } != AXError::Success {
+    pub fn focused_element(&self) -> Option<(CFRetained<AXUIElement>, i32)> {
+        // Non-activating panels can own focus while Quartz reports the underlying app's PID.
+        let system = unsafe { AXUIElement::new_system_wide() };
+        if unsafe { system.set_messaging_timeout(TIMEOUT) } != AXError::Success {
             return None;
         }
-        let focused = attribute(&application, &self.focused)?
+        let focused = attribute(&system, &self.focused)?
             .downcast::<AXUIElement>()
             .ok()?;
+        let mut pid = 0;
+        if unsafe { focused.pid(NonNull::from(&mut pid)) } != AXError::Success || pid <= 0 {
+            return None;
+        }
+        Some((focused, pid))
+    }
+
+    pub fn replace(&self, focused: &AXUIElement, delete: usize, replacement: &[u16]) -> bool {
+        self.try_replace(focused, delete, replacement).is_some()
+    }
+
+    fn try_replace(&self, focused: &AXUIElement, delete: usize, replacement: &[u16]) -> Option<()> {
         if unsafe { focused.set_messaging_timeout(TIMEOUT) } != AXError::Success {
             return None;
         }
-        let value = attribute(&focused, &self.value)?
+        let value = attribute(focused, &self.value)?
             .downcast::<CFString>()
             .ok()?;
-        let range = attribute(&focused, &self.selection)?
+        let range = attribute(focused, &self.selection)?
             .downcast::<AXValue>()
             .ok()?;
         let mut selection = CFRange {

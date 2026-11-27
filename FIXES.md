@@ -17,8 +17,11 @@ Mỗi phím trước đây gọi `NSWorkspace frontmostApplication` và `CGWindo
 Với các bundle id sau, OpenKey không gửi Backspace:
 
 - `com.apple.Spotlight`
+- `com.apple.campo` (Siri AI trên macOS 27)
 - `com.runningwithcrayons.Alfred` và `com.runningwithcrayons.Alfred-3`
 - `com.raycast.macos`
+
+Trên macOS 27, Spotlight giữ nguyên ứng dụng tiền cảnh nên PID của sự kiện phím có thể thuộc ứng dụng bên dưới. Cả bản Rust và Objective-C chỉ hỏi Accessibility về chủ sở hữu ô đang focus khi bộ gõ cần xóa ký tự. Nhờ đó Telex gõ `oo` cho ra `ô`. Kiểm tra trực tiếp bằng `rust/neokey-mac/live-tests/spotlight_oo.sh`.
 
 Thứ tự:
 

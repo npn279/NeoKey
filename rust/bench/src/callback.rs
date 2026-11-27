@@ -1,6 +1,6 @@
 use engine_diff::{benchmark, Key};
 use neokey_engine::{Event, EventState, Settings};
-use neokey_mac::typing::{Input, OutputAction, Typing};
+use neokey_mac::typing::{Input, LauncherTarget, OutputAction, Typing};
 use objc2::rc::autoreleasepool;
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{
@@ -139,7 +139,7 @@ impl RustCallback {
                     let pass = edit.replay_trigger;
                     self.output.edit(
                         proxy,
-                        None,
+                        LauncherTarget::Regular,
                         self.step,
                         self.typing.engine().settings().vCodeTable,
                         edit,

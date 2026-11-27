@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use neokey_engine::vietnamese::character_to_key;
 use neokey_engine::{Settings, SmartSwitch};
-use neokey_mac::typing::{AppBehavior, Input, OutputAction, Typing};
+use neokey_mac::typing::{AppBehavior, Input, LauncherTarget, OutputAction, Typing};
 use objc2::rc::{autoreleasepool, Retained};
 use objc2::{sel, MainThreadMarker};
 use objc2_app_kit::{
@@ -138,7 +138,7 @@ pub fn run() -> Result<(), &'static str> {
 struct Focus {
     pid: i32,
     id: Option<Rc<str>>,
-    behavior: AppBehavior,
+    launcher: bool,
 }
 
 struct State {
@@ -177,15 +177,17 @@ impl State {
             CGEventType::FlagsChanged => Input::FlagsChanged(CGEvent::flags(Some(event)).0),
             _ => Input::MouseDown,
         };
-        let launcher_pid = self
-            .focus
-            .as_ref()
-            .filter(|focus| focus.behavior.launcher)
-            .map(|focus| focus.pid);
         let Some(output) = self.tap.as_ref().map(|tap| &tap.output) else {
             return true;
         };
-        match self.typing.process_key(input) {
+        let action = self.typing.process_key(input);
+        let event_launcher = self.focus.as_ref().is_some_and(|focus| focus.launcher);
+        let launcher = action.focused_launcher(event_launcher, || {
+            let (element, pid) = output.launcher_ax.focused_element()?;
+            let id = Self::bundle_for_pid(&mut self.bundles, pid)?;
+            Some((AppBehavior::for_bundle(&id), element))
+        });
+        match action {
             OutputAction::Pass => true,
             OutputAction::Suppress => false,
             OutputAction::ToggleLanguage => {
@@ -197,7 +199,7 @@ impl State {
                 let pass = edit.replay_trigger;
                 output.edit(
                     proxy,
-                    launcher_pid,
+                    launcher,
                     self.preferences.step_by_step,
                     self.typing.engine().settings().vCodeTable,
                     edit,
@@ -206,11 +208,17 @@ impl State {
                 pass
             }
             OutputAction::ExtraBackspaces(count) => {
-                if launcher_pid.is_some() {
-                    // The physical Backspace that follows will delete the whole selection.
-                    output.select_left(proxy, count + 1);
-                } else {
-                    output.extra_backspaces(proxy, count);
+                match launcher {
+                    LauncherTarget::Regular => output.extra_backspaces(proxy, count),
+                    // Compound Unicode is already deleted as one grapheme by launchers.
+                    LauncherTarget::Focused(_) | LauncherTarget::SelectOnly
+                        if self.typing.engine().settings().vCodeTable == 3 => {}
+                    LauncherTarget::Focused(element)
+                        if output.launcher_ax.replace(&element, count, &[]) => {}
+                    LauncherTarget::Focused(_) | LauncherTarget::SelectOnly => {
+                        // The physical Backspace that follows will delete the whole selection.
+                        output.select_left(proxy, count + 1);
+                    }
                 }
                 true
             }
@@ -224,15 +232,8 @@ impl State {
         {
             return;
         }
-        if let Some(id) = self.bundles.get(&pid).cloned() {
-            self.set_focus(pid, id);
-        } else if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
-        {
-            self.activate_app(&app);
-        } else {
-            self.cache_pid(pid, None);
-            self.set_focus(pid, None);
-        }
+        let id = Self::bundle_for_pid(&mut self.bundles, pid);
+        self.set_focus(pid, id);
     }
 
     fn activate_app(&mut self, app: &NSRunningApplication) {
@@ -246,21 +247,35 @@ impl State {
         {
             return;
         }
-        let id = app
-            .bundleIdentifier()
-            .or_else(|| app.localizedName())
-            .map(|id| id.to_string())
-            .filter(|id| !id.is_empty() && id.len() <= u8::MAX as usize)
-            .map(Rc::<str>::from);
-        self.cache_pid(pid, id.clone());
+        let id = Self::app_id(app);
+        Self::cache_pid(&mut self.bundles, pid, id.clone());
         self.set_focus(pid, id);
     }
 
-    fn cache_pid(&mut self, pid: i32, id: Option<Rc<str>>) {
-        if self.bundles.len() >= MAX_CACHED_PIDS {
-            self.bundles.clear();
+    fn bundle_for_pid(bundles: &mut HashMap<i32, Option<Rc<str>>>, pid: i32) -> Option<Rc<str>> {
+        if let Some(id) = bundles.get(&pid) {
+            return id.clone();
         }
-        self.bundles.insert(pid, id);
+        let id = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+            .as_deref()
+            .and_then(Self::app_id);
+        Self::cache_pid(bundles, pid, id.clone());
+        id
+    }
+
+    fn app_id(app: &NSRunningApplication) -> Option<Rc<str>> {
+        app.bundleIdentifier()
+            .or_else(|| app.localizedName())
+            .map(|id| id.to_string())
+            .filter(|id| !id.is_empty() && id.len() <= u8::MAX as usize)
+            .map(Rc::<str>::from)
+    }
+
+    fn cache_pid(bundles: &mut HashMap<i32, Option<Rc<str>>>, pid: i32, id: Option<Rc<str>>) {
+        if bundles.len() >= MAX_CACHED_PIDS {
+            bundles.clear();
+        }
+        bundles.insert(pid, id);
     }
 
     fn set_focus(&mut self, pid: i32, id: Option<Rc<str>>) {
@@ -292,7 +307,11 @@ impl State {
                 }
             }
         }
-        self.focus = Some(Focus { pid, id, behavior });
+        self.focus = Some(Focus {
+            pid,
+            id,
+            launcher: behavior.launcher,
+        });
     }
 
     fn forget_app(&mut self, pid: i32) {

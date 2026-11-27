@@ -40,8 +40,38 @@ pub enum OutputAction {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum LauncherTarget<T> {
+    Regular,
+    SelectOnly,
+    Focused(T),
+}
+
+impl OutputAction {
+    pub fn focused_launcher<T>(
+        &self,
+        event_launcher: bool,
+        lookup: impl FnOnce() -> Option<(AppBehavior, T)>,
+    ) -> LauncherTarget<T> {
+        let deletes = match self {
+            Self::Replace(edit) => edit.backspaces,
+            Self::ExtraBackspaces(count) => *count,
+            _ => 0,
+        };
+        if deletes == 0 {
+            return LauncherTarget::Regular;
+        }
+        match lookup() {
+            Some((owner, element)) if owner.launcher => LauncherTarget::Focused(element),
+            None if event_launcher => LauncherTarget::SelectOnly,
+            _ => LauncherTarget::Regular,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Edit {
     pub backspaces: usize,
+    pub launcher_selection: usize,
     pub utf16_delete: usize,
     pub characters: Vec<Character>,
     pub replay_trigger: bool,
@@ -73,6 +103,7 @@ impl AppBehavior {
     pub fn for_bundle(id: &str) -> Self {
         let launcher = [
             "com.apple.Spotlight",
+            "com.apple.campo",
             "com.runningwithcrayons.Alfred",
             "com.raycast.macos",
         ]
@@ -383,6 +414,7 @@ impl Typing {
         }
         OutputAction::Replace(Edit {
             backspaces,
+            launcher_selection: if table == 2 { backspaces } else { delete },
             utf16_delete,
             characters,
             replay_trigger,
@@ -478,6 +510,76 @@ mod tests {
     }
 
     #[test]
+    fn campo_is_a_launcher() {
+        assert!(AppBehavior::for_bundle("com.apple.campo").launcher);
+    }
+
+    #[test]
+    fn telex_edit_uses_the_focused_launcher_even_with_a_different_event_target() {
+        let mut typing = Typing::new(Settings::default());
+        let event_app = AppBehavior::for_bundle("com.apple.Terminal");
+        assert!(!event_app.launcher);
+        typing.set_app(event_app);
+
+        let first = typing.process_key(down(KEY_O, 0));
+        assert_eq!(first, OutputAction::Pass);
+        assert_eq!(
+            first.focused_launcher::<()>(event_app.launcher, || panic!(
+                "pass-through key queried AX"
+            )),
+            LauncherTarget::Regular
+        );
+        let second = typing.process_key(down(KEY_O, 0));
+        assert!(matches!(&second, OutputAction::Replace(edit) if edit.backspaces == 1));
+        assert_eq!(
+            second.focused_launcher(event_app.launcher, || Some((
+                AppBehavior::for_bundle("com.apple.campo"),
+                42
+            ))),
+            LauncherTarget::Focused(42)
+        );
+        assert_eq!(
+            second.focused_launcher(true, || Some((event_app, 42))),
+            LauncherTarget::Regular
+        );
+        assert_eq!(
+            second.focused_launcher::<()>(true, || None),
+            LauncherTarget::SelectOnly
+        );
+    }
+
+    #[test]
+    fn launcher_lookup_runs_only_for_actions_that_delete_text() {
+        let insertion = OutputAction::Replace(Edit {
+            backspaces: 0,
+            launcher_selection: 0,
+            utf16_delete: 0,
+            characters: vec![],
+            replay_trigger: false,
+            workaround: Workaround::Placeholder(0x202f),
+        });
+        for action in [
+            insertion,
+            OutputAction::Suppress,
+            OutputAction::ToggleLanguage,
+            OutputAction::ExtraBackspaces(0),
+        ] {
+            assert_eq!(
+                action
+                    .focused_launcher::<()>(true, || panic!("action without deletion queried AX")),
+                LauncherTarget::Regular
+            );
+        }
+        assert_eq!(
+            OutputAction::ExtraBackspaces(1).focused_launcher(false, || Some((
+                AppBehavior::for_bundle("com.apple.campo"),
+                42
+            ))),
+            LauncherTarget::Focused(42)
+        );
+    }
+
+    #[test]
     fn telex_replaces_the_previous_vowel_and_consumes_the_tone_key() {
         let mut typing = Typing::new(Settings::default());
         assert_eq!(typing.process_key(down(KEY_A, 0)), OutputAction::Pass);
@@ -485,6 +587,7 @@ mod tests {
             typing.process_key(down(KEY_S, 0)),
             OutputAction::Replace(Edit {
                 backspaces: 1,
+                launcher_selection: 1,
                 utf16_delete: 1,
                 characters: vec![Character::Text {
                     units: [0x00e1, 0],
@@ -533,6 +636,7 @@ mod tests {
             typing.process_key(down(KEY_S, 0)),
             OutputAction::Replace(Edit {
                 backspaces: 1,
+                launcher_selection: 1,
                 utf16_delete: 1,
                 characters: vec![Character::Text {
                     units: [b'a' as u16, 0],
@@ -563,6 +667,7 @@ mod tests {
         };
         assert_eq!(edit.utf16_delete, 2);
         assert_eq!(edit.backspaces, 1);
+        assert_eq!(edit.launcher_selection, 1);
         assert_eq!(edit.workaround, Workaround::None);
         assert_eq!(
             edit.characters,
@@ -571,6 +676,22 @@ mod tests {
                 len: 2
             }]
         );
+    }
+
+    #[test]
+    fn compound_launcher_fallback_selects_one_grapheme_with_a_different_event_target() {
+        let mut typing = Typing::new(Settings {
+            vCodeTable: 3,
+            ..Settings::default()
+        });
+        typing.set_app(AppBehavior::for_bundle("org.mozilla.firefox"));
+        typing.process_key(down(KEY_A, 0));
+        typing.process_key(down(KEY_S, 0));
+        let OutputAction::Replace(edit) = typing.process_key(down(KEY_F, 0)) else {
+            panic!("changing the tone should replace the composed vowel");
+        };
+        assert_eq!(edit.backspaces, 2);
+        assert_eq!(edit.launcher_selection, 1);
     }
 
     #[test]
@@ -588,6 +709,7 @@ mod tests {
             typing.process_key(down(KEY_SPACE, 0)),
             OutputAction::Replace(Edit {
                 backspaces: 2,
+                launcher_selection: 2,
                 utf16_delete: 2,
                 characters: vec![Character::Text {
                     units: [0xd83d, 0xde00],

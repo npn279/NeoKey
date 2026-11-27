@@ -2,8 +2,9 @@ use std::ffi::c_void;
 use std::ptr::{self, NonNull};
 
 use neokey_engine::data::{KEY_DELETE, KEY_LEFT};
-use neokey_mac::typing::{Character, Edit, Workaround};
+use neokey_mac::typing::{Character, Edit, LauncherTarget, Workaround};
 use objc2::rc::autoreleasepool;
+use objc2_application_services::AXUIElement;
 use objc2_core_foundation::{
     kCFRunLoopCommonModes, CFMachPort, CFRetained, CFRunLoop, CFRunLoopSource,
 };
@@ -155,7 +156,7 @@ impl KeyPair {
 
 pub struct Output {
     source: CFRetained<CGEventSource>,
-    launcher_ax: LauncherAccessibility,
+    pub(super) launcher_ax: LauncherAccessibility,
     backspace: Option<KeyPair>,
 }
 
@@ -190,12 +191,12 @@ impl Output {
     pub fn edit(
         &self,
         proxy: CGEventTapProxy,
-        launcher_pid: Option<i32>,
+        launcher: LauncherTarget<CFRetained<AXUIElement>>,
         step_by_step: bool,
         code_table: i64,
         edit: Edit,
     ) {
-        if let Some(pid) = launcher_pid {
+        if let LauncherTarget::Focused(element) = &launcher {
             let mut replacement = Vec::with_capacity(edit.characters.len());
             let all_text = edit.characters.iter().all(|character| match character {
                 Character::Text { units, len } => {
@@ -207,12 +208,12 @@ impl Output {
             if all_text
                 && self
                     .launcher_ax
-                    .replace(pid, edit.utf16_delete, &replacement)
+                    .replace(element, edit.utf16_delete, &replacement)
             {
                 return;
             }
-            self.select_left(proxy, edit.backspaces);
-        } else {
+        }
+        if matches!(launcher, LauncherTarget::Regular) {
             match edit.workaround {
                 Workaround::None => self.extra_backspaces(proxy, edit.backspaces),
                 Workaround::Placeholder(character) => {
@@ -227,6 +228,8 @@ impl Output {
                     self.extra_backspaces(proxy, backspaces);
                 }
             }
+        } else {
+            self.select_left(proxy, edit.launcher_selection);
         }
 
         let mut batch = [0; BATCH_SIZE];
