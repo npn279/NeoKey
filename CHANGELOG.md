@@ -1,6 +1,7 @@
 # OpenKey Change Log
 
 ##### Chưa phát hành
+- macOS: NeoKey (bản Rust) gửi ký tự thay thế bằng mã phím không có trên bàn phím ANSI thay vì mã phím của A, sửa lỗi gõ "nữa" thành "ữa" trong app Claude khi chưa nhả phím A.
 - macOS: NeoKey (bản Rust) tự khởi động lại một lần khi được cấp quyền Trợ năng để gõ dấu trong Spotlight, Alfred và Raycast.
 - macOS 27: bản Rust và Objective-C nhận diện ô Spotlight của `com.apple.campo` khi cần xóa ký tự, sửa lỗi Telex gõ `oo` thành `oô`.
 

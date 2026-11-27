@@ -110,9 +110,7 @@ pub fn run() -> Result<(), &'static str> {
                 state.install_tap();
             } else {
                 accessibility::prompt_for_permission();
-                eprintln!(
-                    "Grant NeoKey Accessibility access in System Settings to enable typing"
-                );
+                eprintln!("Grant NeoKey Accessibility access in System Settings to enable typing");
             }
         });
 
@@ -493,7 +491,9 @@ impl State {
                         match relaunch_bundle(path) {
                             Ok(child) => self.relaunch_child = Some(child),
                             Err(error) => {
-                                eprintln!("Could not relaunch NeoKey ({error}). Quit and reopen NeoKey.");
+                                eprintln!(
+                                    "Could not relaunch NeoKey ({error}). Quit and reopen NeoKey."
+                                );
                             }
                         }
                     }

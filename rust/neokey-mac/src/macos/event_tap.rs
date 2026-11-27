@@ -154,6 +154,11 @@ impl KeyPair {
     }
 }
 
+// Synthetic text uses kVK_ISO_Section, which ANSI keyboards lack. With key code 0
+// (kVK_ANSI_A), an edit triggered while A is still held reads as a second A press,
+// and Claude's editor then deletes the wrong characters ("nữa" became "ữa").
+const TEXT_KEY: u16 = 0x0a;
+
 pub struct Output {
     source: CFRetained<CGEventSource>,
     pub(super) launcher_ax: LauncherAccessibility,
@@ -217,7 +222,7 @@ impl Output {
             match edit.workaround {
                 Workaround::None => self.extra_backspaces(proxy, edit.backspaces),
                 Workaround::Placeholder(character) => {
-                    self.send(proxy, 0, false, &[character]);
+                    self.send(proxy, TEXT_KEY, false, &[character]);
                     self.extra_backspaces(proxy, edit.backspaces + 1);
                 }
                 Workaround::SelectBeforeDelete {
@@ -239,15 +244,15 @@ impl Output {
                 Character::Text { units, len } if step_by_step => {
                     if len == 2 && matches!(code_table, 1 | 2 | 4) && units[0] <= 0xff {
                         // Legacy tables emit their two bytes as separate keystrokes in this mode.
-                        self.send(proxy, 0, false, &units[..1]);
-                        self.send(proxy, 0, false, &units[1..]);
+                        self.send(proxy, TEXT_KEY, false, &units[..1]);
+                        self.send(proxy, TEXT_KEY, false, &units[1..]);
                     } else {
-                        self.send(proxy, 0, false, &units[..len]);
+                        self.send(proxy, TEXT_KEY, false, &units[..len]);
                     }
                 }
                 Character::Text { units, len } => {
                     if filled + len > batch.len() {
-                        self.send(proxy, 0, false, &batch[..filled]);
+                        self.send(proxy, TEXT_KEY, false, &batch[..filled]);
                         filled = 0;
                     }
                     batch[filled..filled + len].copy_from_slice(&units[..len]);
@@ -255,7 +260,7 @@ impl Output {
                 }
                 Character::Key { code, shift } => {
                     if filled != 0 {
-                        self.send(proxy, 0, false, &batch[..filled]);
+                        self.send(proxy, TEXT_KEY, false, &batch[..filled]);
                         filled = 0;
                     }
                     self.send(proxy, code, shift, &[]);
@@ -263,7 +268,7 @@ impl Output {
             }
         }
         if filled != 0 {
-            self.send(proxy, 0, false, &batch[..filled]);
+            self.send(proxy, TEXT_KEY, false, &batch[..filled]);
         }
     }
 
