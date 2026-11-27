@@ -2,10 +2,14 @@ mod accessibility;
 mod event_tap;
 mod input_source;
 mod preferences;
+mod startup_accessibility;
 mod status_menu;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 
 use neokey_engine::vietnamese::character_to_key;
@@ -19,10 +23,11 @@ use objc2_app_kit::{
     NSWorkspaceDidTerminateApplicationNotification,
 };
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapProxy, CGEventType};
-use objc2_foundation::{ns_string, NSRunLoop, NSRunLoopCommonModes, NSTimer};
+use objc2_foundation::{ns_string, NSBundle, NSRunLoop, NSRunLoopCommonModes, NSTimer};
 
 use self::event_tap::Tap;
 use self::preferences::Preferences;
+use self::startup_accessibility::{Action, StartupAccessibility};
 use self::status_menu::{MenuTarget, StatusMenu};
 
 const MAX_CACHED_PIDS: usize = 128;
@@ -41,6 +46,14 @@ fn with_state<T>(action: impl FnOnce(&mut State) -> T) -> Option<T> {
 pub fn run() -> Result<(), &'static str> {
     autoreleasepool(|_| {
         let mtm = MainThreadMarker::new().ok_or("NeoKeyRust requires the main thread")?;
+        let trusted_at_launch = accessibility::is_trusted();
+        let bundle_path = NSBundle::mainBundle()
+            .bundleURL()
+            .to_file_path()
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+            });
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         let (preferences, settings) = Preferences::load();
@@ -79,6 +92,9 @@ pub fn run() -> Result<(), &'static str> {
                 focus: None,
                 bundles: HashMap::new(),
                 own_pid: std::process::id() as i32,
+                startup_accessibility: StartupAccessibility::new(trusted_at_launch),
+                bundle_path,
+                relaunch_child: None,
                 tap: None,
                 menu,
             }));
@@ -90,9 +106,10 @@ pub fn run() -> Result<(), &'static str> {
             }
             state.refresh_menu();
             state.refresh_input_source();
-            if accessibility::prompt_for_permission() {
+            if trusted_at_launch {
                 state.install_tap();
             } else {
+                accessibility::prompt_for_permission();
                 eprintln!(
                     "Grant NeoKeyRust Accessibility access in System Settings to enable typing"
                 );
@@ -129,7 +146,7 @@ pub fn run() -> Result<(), &'static str> {
 
         timer.invalidate();
         unsafe { notifications.removeObserver(&target) };
-        with_state(|state| state.flush_preferences());
+        with_state(State::shutdown);
         STATE.with(|state| state.replace(None));
         Ok(())
     })
@@ -151,6 +168,9 @@ struct State {
     focus: Option<Focus>,
     bundles: HashMap<i32, Option<Rc<str>>>,
     own_pid: i32,
+    startup_accessibility: StartupAccessibility,
+    bundle_path: Option<PathBuf>,
+    relaunch_child: Option<Child>,
     tap: Option<Tap>,
     menu: Option<Rc<StatusMenu>>,
 }
@@ -405,6 +425,14 @@ impl State {
         }
     }
 
+    fn shutdown(&mut self) {
+        self.flush_preferences();
+        self.tap = None;
+        if let Some(menu) = self.menu.take() {
+            menu.remove();
+        }
+    }
+
     fn install_tap(&mut self) {
         self.tap = Tap::install();
         if self.tap.is_some() {
@@ -425,19 +453,66 @@ impl State {
         }
     }
 
-    fn watchdog(&mut self) {
+    fn watchdog(&mut self) -> bool {
+        if let Some(child) = &mut self.relaunch_child {
+            // Check Launch Services' result without blocking the AppKit run loop.
+            match child.try_wait() {
+                Ok(None) => return false,
+                Ok(Some(status)) if status.success() => return true,
+                Ok(Some(status)) => {
+                    eprintln!("Could not relaunch NeoKeyRust ({status}). Quit and reopen NeoKeyRust.");
+                }
+                Err(error) => {
+                    eprintln!("Could not check NeoKeyRust relaunch ({error}). Quit and reopen NeoKeyRust.");
+                }
+            }
+            self.relaunch_child = None;
+        }
+
         if self.tap.as_ref().is_some_and(|tap| !tap.is_valid()) {
             self.tap = None;
             self.typing.reset_after_tap_disable();
         }
         if self.tap.is_some() {
             self.ensure_tap();
-        } else if accessibility::is_trusted() {
-            self.install_tap();
+        } else {
+            match self
+                .startup_accessibility
+                .action(accessibility::is_trusted(), self.bundle_path.is_some())
+            {
+                Action::Wait => {}
+                Action::InstallTap => self.install_tap(),
+                Action::InstallTapAndRecommendRestart => {
+                    eprintln!("Restart NeoKeyRust for Spotlight, Alfred and Raycast support");
+                    self.install_tap();
+                }
+                Action::Relaunch => {
+                    self.flush_preferences();
+                    self.preferences.synchronize();
+                    if let Some(path) = &self.bundle_path {
+                        match relaunch_bundle(path) {
+                            Ok(child) => self.relaunch_child = Some(child),
+                            Err(error) => {
+                                eprintln!("Could not relaunch NeoKeyRust ({error}). Quit and reopen NeoKeyRust.");
+                            }
+                        }
+                    }
+                }
+            }
         }
         self.refresh_input_source();
         self.flush_preferences();
+        false
     }
+}
+
+fn relaunch_bundle(path: &Path) -> std::io::Result<Child> {
+    Command::new("/usr/bin/open")
+        .args(["-g", "-n"])
+        .arg(path)
+        .process_group(0)
+        .stdin(Stdio::null())
+        .spawn()
 }
 
 fn selection(settings: &Settings) -> i32 {

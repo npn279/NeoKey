@@ -9,7 +9,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{ns_string, NSNotification, NSPoint, NSString, NSTimer};
 
-use super::with_state;
+use super::{with_state, State};
 
 define_class!(
     // NSObject has no subclassing requirements. These selectors are called by AppKit on its main thread.
@@ -49,13 +49,14 @@ define_class!(
 
         #[unsafe(method(quitNeoKey:))]
         fn quit(&self, _: &NSMenuItem) {
-            with_state(|state| state.flush_preferences());
-            NSApplication::sharedApplication(self.mtm()).terminate(None);
+            self.terminate_app();
         }
 
         #[unsafe(method(watchdog:))]
         fn watchdog(&self, _: &NSTimer) {
-            with_state(|state| state.watchdog());
+            if with_state(State::watchdog) == Some(true) {
+                self.terminate_app();
+            }
         }
 
         #[unsafe(method(appActivated:))]
@@ -75,6 +76,11 @@ define_class!(
 );
 
 impl MenuTarget {
+    fn terminate_app(&self) {
+        with_state(State::shutdown);
+        NSApplication::sharedApplication(self.mtm()).terminate(None);
+    }
+
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         // NSObject's inherited init leaves this ivar-free instance initialized.
         unsafe { msg_send![super(Self::alloc(mtm).set_ivars(())), init] }
@@ -90,7 +96,7 @@ fn notification_app(notification: &NSNotification) -> Option<Retained<NSRunningA
 }
 
 pub struct StatusMenu {
-    _status: Retained<NSStatusItem>,
+    status: Retained<NSStatusItem>,
     button: Retained<NSStatusBarButton>,
     menu: Retained<NSMenu>,
     input_types: Vec<Retained<NSMenuItem>>,
@@ -158,13 +164,17 @@ impl StatusMenu {
             sel!(quitNeoKey:),
         );
         Ok(Self {
-            _status: status,
+            status,
             button,
             menu,
             input_types,
             tables,
             spelling,
         })
+    }
+
+    pub(super) fn remove(&self) {
+        NSStatusBar::systemStatusBar().removeStatusItem(&self.status);
     }
 
     pub fn refresh(&self, settings: &Settings, spelling: bool) {

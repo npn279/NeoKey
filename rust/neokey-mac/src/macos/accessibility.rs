@@ -9,12 +9,12 @@ use objc2_core_foundation::{CFBoolean, CFDictionary, CFRange, CFRetained, CFStri
 const TIMEOUT: f32 = 0.08;
 const MAX_FIELD_LENGTH: isize = 65536;
 
-pub fn prompt_for_permission() -> bool {
+pub fn prompt_for_permission() {
     // This dictionary contains the Accessibility prompt key and its documented Boolean value.
     unsafe {
         let options =
             CFDictionary::from_slices(&[kAXTrustedCheckOptionPrompt], &[CFBoolean::new(true)]);
-        AXIsProcessTrustedWithOptions(Some(options.as_opaque()))
+        AXIsProcessTrustedWithOptions(Some(options.as_opaque()));
     }
 }
 
