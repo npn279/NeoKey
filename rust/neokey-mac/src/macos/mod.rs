@@ -4,6 +4,7 @@ mod input_source;
 mod preferences;
 mod startup_accessibility;
 mod status_menu;
+mod ui;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ use self::event_tap::Tap;
 use self::preferences::Preferences;
 use self::startup_accessibility::{Action, StartupAccessibility};
 use self::status_menu::{MenuTarget, StatusMenu};
+use self::ui::{tag, Hotkey, SettingsSection, Ui, UiHandle, UiSnapshot};
 
 const MAX_CACHED_PIDS: usize = 128;
 
@@ -58,6 +60,7 @@ pub fn run() -> Result<(), &'static str> {
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         let (preferences, settings) = Preferences::load();
         let target = MenuTarget::new(mtm);
+        let target_keep = target.clone();
         let menu = match StatusMenu::new(mtm, &target) {
             Ok(menu) => Some(Rc::new(menu)),
             Err(message) => {
@@ -65,6 +68,7 @@ pub fn run() -> Result<(), &'static str> {
                 None
             }
         };
+        let ui = Rc::new(Ui::new(mtm, &target));
         let spell_preference = settings.vCheckSpelling;
         let mut typing = Typing::new(settings);
         typing.set_chromium_fix(preferences.chromium_fix);
@@ -97,6 +101,9 @@ pub fn run() -> Result<(), &'static str> {
                 relaunch_child: None,
                 tap: None,
                 menu,
+                ui: Some(ui),
+                hotkey_capture: false,
+                target: target_keep,
             }));
         });
         let workspace = NSWorkspace::sharedWorkspace();
@@ -104,12 +111,14 @@ pub fn run() -> Result<(), &'static str> {
             if let Some(front) = workspace.frontmostApplication() {
                 state.activate_app(&front);
             }
-            state.refresh_menu();
+            state.refresh_ui();
             state.refresh_input_source();
             if trusted_at_launch {
                 state.install_tap();
             } else {
-                accessibility::prompt_for_permission();
+                if let Some(ui) = &state.ui {
+                    ui.show_onboarding_if_needed(false);
+                }
                 eprintln!("Grant NeoKey Accessibility access in System Settings to enable typing");
             }
         });
@@ -171,6 +180,9 @@ struct State {
     relaunch_child: Option<Child>,
     tap: Option<Tap>,
     menu: Option<Rc<StatusMenu>>,
+    ui: Option<UiHandle>,
+    hotkey_capture: bool,
+    target: Retained<MenuTarget>,
 }
 
 impl State {
@@ -320,7 +332,7 @@ impl State {
                         settings.vCodeTable = table;
                         self.apply_settings(settings);
                         self.selection_dirty = true;
-                        self.refresh_menu();
+                        self.refresh_ui();
                     }
                 }
             }
@@ -352,7 +364,7 @@ impl State {
             self.remember_selection();
         }
         self.selection_dirty = true;
-        self.refresh_menu();
+        self.refresh_ui();
     }
 
     fn select_input_type(&mut self, mode: i64) {
@@ -360,7 +372,7 @@ impl State {
         settings.vInputType = mode;
         self.apply_settings(settings);
         self.preferences.integer(ns_string!("InputType"), mode);
-        self.refresh_menu();
+        self.refresh_ui();
     }
 
     fn select_code_table(&mut self, table: i64) {
@@ -372,17 +384,7 @@ impl State {
             self.remember_selection();
         }
         self.selection_dirty = true;
-        self.refresh_menu();
-    }
-
-    fn toggle_spelling(&mut self) {
-        self.spell_preference = i64::from(self.spell_preference == 0);
-        let mut settings = self.typing.engine().settings().clone();
-        settings.vCheckSpelling = self.spell_preference;
-        self.apply_settings(settings);
-        self.preferences
-            .integer(ns_string!("Spelling"), self.spell_preference);
-        self.refresh_menu();
+        self.refresh_ui();
     }
 
     fn apply_settings(&mut self, mut settings: Settings) {
@@ -395,10 +397,572 @@ impl State {
         self.typing.reset_session();
     }
 
-    fn refresh_menu(&self) {
-        if let Some(menu) = &self.menu {
-            menu.refresh(self.typing.engine().settings(), self.spell_preference != 0);
+    fn ui_snapshot(&self) -> UiSnapshot {
+        let settings = self.typing.engine().settings().clone();
+        let macros = self
+            .typing
+            .engine()
+            .macros()
+            .all()
+            .map(|(_, m)| (m.text.clone(), m.content.clone()))
+            .collect();
+        UiSnapshot {
+            settings,
+            spelling: self.spell_preference != 0,
+            step_by_step: self.preferences.step_by_step,
+            layout_compat: self.preferences.layout_compat,
+            chromium_fix: self.preferences.chromium_fix,
+            hotkey: Hotkey::from_status(self.typing.engine().settings().vSwitchKeyStatus),
+            focus_app: self
+                .focus
+                .as_ref()
+                .and_then(|f| f.id.as_ref().map(|s| s.to_string())),
+            focus_launcher: self.focus.as_ref().is_some_and(|f| f.launcher),
+            macros,
         }
+    }
+
+    fn refresh_ui(&self) {
+        if let Some(menu) = &self.menu {
+            menu.refresh_title(self.typing.engine().settings().vLanguage != 0);
+        }
+        let Some(ui) = &self.ui else {
+            return;
+        };
+        let snap = self.ui_snapshot();
+        ui.refresh(&snap);
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let rows: Vec<_> = self
+            .smart_switch
+            .iter()
+            .map(|(bundle, stored)| {
+                let compat = AppBehavior::for_bundle(bundle).launcher;
+                (bundle.to_string(), stored, compat)
+            })
+            .collect();
+        ui.settings.apps.refresh_apps(mtm, &self.target, &rows);
+    }
+
+    fn show_panel(&self, button: &objc2_app_kit::NSStatusBarButton) {
+        if let Some(ui) = &self.ui {
+            self.refresh_ui();
+            ui.show_panel(button);
+        }
+    }
+
+    fn set_language(&mut self, vi: bool) {
+        let mut settings = self.typing.engine().settings().clone();
+        let want = i64::from(vi);
+        if settings.vLanguage == want {
+            return;
+        }
+        settings.vLanguage = want;
+        self.apply_settings(settings);
+        if self.typing.engine().settings().vUseSmartSwitchKey != 0 {
+            self.remember_selection();
+        }
+        self.selection_dirty = true;
+        self.refresh_ui();
+    }
+
+    fn handle_ui_action(&mut self, tag: isize, sender: &objc2_app_kit::NSControl) {
+        use objc2_app_kit::{NSApplication, NSPopUpButton, NSSwitch, NSWorkspace};
+        use objc2_foundation::NSURL;
+
+        match tag {
+            tag::LANG_VI => self.set_language(true),
+            tag::LANG_EN => self.set_language(false),
+            tag::QUIT => {
+                self.shutdown();
+                let mtm = MainThreadMarker::new().expect("main thread");
+                NSApplication::sharedApplication(mtm).terminate(None);
+            }
+            tag::GEAR => {
+                if let Some(ui) = &self.ui {
+                    ui.show_settings(SettingsSection::General);
+                }
+            }
+            tag::OPEN_MACROS => {
+                if let Some(ui) = &self.ui {
+                    ui.show_settings(SettingsSection::Macros);
+                }
+            }
+            tag::OPEN_CONVERT => {
+                if let Some(ui) = &self.ui {
+                    ui.show_settings(SettingsSection::Convert);
+                }
+            }
+            tag::PANEL_SPELL => {
+                if let Some(sw) = sender.downcast_ref::<NSSwitch>() {
+                    let on = sw.state() == objc2_app_kit::NSControlStateValueOn;
+                    self.spell_preference = i64::from(on);
+                    let mut settings = self.typing.engine().settings().clone();
+                    settings.vCheckSpelling = self.spell_preference;
+                    self.apply_settings(settings);
+                    self.preferences
+                        .integer(ns_string!("Spelling"), self.spell_preference);
+                    self.refresh_ui();
+                }
+            }
+            tag::PANEL_SMART => {
+                if let Some(sw) = sender.downcast_ref::<NSSwitch>() {
+                    let on = sw.state() == objc2_app_kit::NSControlStateValueOn;
+                    let mut settings = self.typing.engine().settings().clone();
+                    let smart = i64::from(on);
+                    settings.vUseSmartSwitchKey = smart;
+                    self.apply_settings(settings);
+                    self.preferences
+                        .integer(ns_string!("UseSmartSwitchKey"), smart);
+                    self.refresh_ui();
+                }
+            }
+            tag::CODE_TABLE => {
+                if let Some(pop) = sender.downcast_ref::<NSPopUpButton>() {
+                    self.select_code_table(pop.indexOfSelectedItem() as i64);
+                }
+            }
+            t if (tag::INPUT_TYPE..tag::INPUT_TYPE + 4).contains(&t) => {
+                self.select_input_type((t - tag::INPUT_TYPE) as i64);
+            }
+            t if (tag::SIDEBAR..tag::SIDEBAR + 6).contains(&t) => {
+                if let Some(ui) = &self.ui {
+                    ui.show_settings(SettingsSection::ALL[(t - tag::SIDEBAR) as usize]);
+                }
+            }
+            tag::HOTKEY_BEEP => {
+                if let Some(sw) = sender.downcast_ref::<NSSwitch>() {
+                    let on = sw.state() == objc2_app_kit::NSControlStateValueOn;
+                    let mut hk =
+                        Hotkey::from_status(self.typing.engine().settings().vSwitchKeyStatus);
+                    hk = hk.with_beep(on);
+                    self.apply_hotkey(hk);
+                }
+            }
+            t if t == tag::SETTING + 1 => {
+                if let Some(sw) = sender.downcast_ref::<NSSwitch>() {
+                    self.preferences.step_by_step =
+                        sw.state() == objc2_app_kit::NSControlStateValueOn;
+                    self.preferences.integer(
+                        ns_string!("SendKeyStepByStep"),
+                        i64::from(self.preferences.step_by_step),
+                    );
+                    self.refresh_ui();
+                }
+            }
+            t if t == tag::SETTING + 2 => {
+                if let Some(sw) = sender.downcast_ref::<NSSwitch>() {
+                    self.preferences.layout_compat =
+                        sw.state() == objc2_app_kit::NSControlStateValueOn;
+                    self.preferences.integer(
+                        ns_string!("vPerformLayoutCompat"),
+                        i64::from(self.preferences.layout_compat),
+                    );
+                    self.refresh_ui();
+                }
+            }
+            t if t == tag::SETTING + 3 => {
+                if let Some(sw) = sender.downcast_ref::<NSSwitch>() {
+                    self.preferences.chromium_fix =
+                        sw.state() == objc2_app_kit::NSControlStateValueOn;
+                    self.preferences.integer(
+                        ns_string!("vFixChromiumBrowser"),
+                        i64::from(self.preferences.chromium_fix),
+                    );
+                    self.typing.set_chromium_fix(self.preferences.chromium_fix);
+                    self.refresh_ui();
+                }
+            }
+            tag::MACRO_ADD => {
+                if let Some(ui) = &self.ui {
+                    let key = ui.settings.macros.shortcut_text();
+                    let content = ui.settings.macros.content_text();
+                    if !key.is_empty() && !content.is_empty() {
+                        self.typing.engine_mut().add_macro(&key, &content);
+                        ui.settings.macros.clear_fields();
+                        self.persist_macros();
+                    }
+                }
+            }
+            tag::MACRO_DELETE => {
+                if let Some(ui) = &self.ui {
+                    let key = ui.settings.macros.shortcut_text();
+                    if !key.is_empty() {
+                        self.typing.engine_mut().delete_macro(&key);
+                        self.persist_macros();
+                    }
+                }
+            }
+            t if (tag::MACRO_ROW_DELETE..tag::MACRO_ROW_DELETE + 2000).contains(&t) => {
+                let idx = (t - tag::MACRO_ROW_DELETE) as usize;
+                let key = self
+                    .typing
+                    .engine()
+                    .macros()
+                    .all()
+                    .nth(idx)
+                    .map(|(_, m)| m.text.clone());
+                if let Some(key) = key {
+                    self.typing.engine_mut().delete_macro(&key);
+                    self.persist_macros();
+                }
+            }
+            tag::MACRO_IMPORT => self.import_macros(),
+            tag::MACRO_EXPORT => self.export_macros(),
+            tag::CONVERT_RUN => self.run_convert(),
+            tag::CONVERT_PASTE => self.convert_paste(),
+            tag::CONVERT_COPY => self.convert_copy(),
+            tag::CONVERT_SWAP => {
+                if let Some(ui) = &self.ui {
+                    let mut opt = ui.settings.convert.ui_options();
+                    opt = opt.swap_tables();
+                    ui.settings.convert.set_from_to(opt.from_code, opt.to_code);
+                }
+            }
+            tag::ONBOARDING_OPEN => {
+                let url = NSURL::URLWithString(ns_string!(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                ));
+                if let Some(url) = url {
+                    NSWorkspace::sharedWorkspace().openURL(&url);
+                }
+            }
+            tag::ONBOARDING_RETRY => {
+                if accessibility::is_trusted() {
+                    if let Some(ui) = &self.ui {
+                        ui.poll_onboarding(true);
+                    }
+                    self.install_tap();
+                } else if let Some(ui) = &self.ui {
+                    ui.onboarding.set_waiting();
+                    accessibility::prompt_for_permission();
+                }
+            }
+            tag::ONBOARDING_QUIT => {
+                self.shutdown();
+                let mtm = MainThreadMarker::new().expect("main thread");
+                NSApplication::sharedApplication(mtm).terminate(None);
+            }
+            tag::LINK => {
+                let _ = NSWorkspace::sharedWorkspace().openURL(
+                    &NSURL::URLWithString(ns_string!("https://github.com/npn279/NeoKey")).unwrap(),
+                );
+            }
+            t if t == tag::LINK + 1 => {
+                let _ = NSWorkspace::sharedWorkspace().openURL(
+                    &NSURL::URLWithString(ns_string!("https://github.com/npn279/NeoKey/issues"))
+                        .unwrap(),
+                );
+            }
+            t if (tag::APP_LANG..tag::APP_LANG + 2000).contains(&t) => {
+                let bundles: Vec<_> = self
+                    .smart_switch
+                    .iter()
+                    .map(|(b, _)| b.to_string())
+                    .collect();
+                let slot = (t - tag::APP_LANG) as usize;
+                let bundle_idx = slot / 2;
+                if let Some(bundle) = bundles.get(bundle_idx) {
+                    let lang = i64::from(slot.is_multiple_of(2));
+                    let stored = self
+                        .smart_switch
+                        .iter()
+                        .find(|(b, _)| *b == bundle.as_str())
+                        .map(|(_, v)| v)
+                        .unwrap_or(0);
+                    let table = SmartSwitch::code_table(stored);
+                    self.smart_switch
+                        .set(bundle, SmartSwitch::packed(lang, table));
+                    self.smart_dirty = true;
+                    self.flush_preferences();
+                    self.refresh_ui();
+                }
+            }
+            _ => {
+                if (tag::SETTING + 10..tag::SETTING + 23).contains(&tag) {
+                    self.apply_typing_toggle(tag - tag::SETTING, sender);
+                }
+            }
+        }
+    }
+
+    fn begin_hotkey_capture(&mut self) {
+        self.hotkey_capture = true;
+        if let Some(ui) = &self.ui {
+            ui.settings.general.set_capturing();
+        }
+    }
+
+    fn finish_hotkey_capture(&mut self, chord: Option<Hotkey>) {
+        match chord {
+            Some(hotkey) => self.apply_hotkey(hotkey),
+            None => {
+                self.hotkey_capture = false;
+                self.refresh_ui();
+            }
+        }
+    }
+
+    fn apply_hotkey(&mut self, hotkey: Hotkey) {
+        let status = hotkey.to_status();
+        let mut settings = self.typing.engine().settings().clone();
+        settings.vSwitchKeyStatus = status;
+        self.apply_settings(settings);
+        self.preferences
+            .integer(ns_string!("SwitchKeyStatus"), status);
+        self.hotkey_capture = false;
+        self.refresh_ui();
+    }
+
+    /// Nested event wait with no `State` borrow so the event tap can still call
+    /// `with_state` / `ensure_tap` while the user finishes a chord.
+    fn wait_for_hotkey_chord(beep: bool) -> Option<Hotkey> {
+        use objc2_app_kit::{NSEventMask, NSEventModifierFlags, NSEventType};
+        use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
+
+        let mtm = MainThreadMarker::new()?;
+        let app = NSApplication::sharedApplication(mtm);
+        let mask = NSEventMask::KeyDown | NSEventMask::FlagsChanged;
+        let mut last_mods = (false, false, false, false);
+        let mut saw_modifiers = false;
+        loop {
+            let event = app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                mask,
+                Some(&NSDate::distantFuture()),
+                // NSDefaultRunLoopMode is a Foundation extern static.
+                unsafe { NSDefaultRunLoopMode },
+                true,
+            )?;
+            let flags = event.modifierFlags();
+            let control = flags.contains(NSEventModifierFlags::Control);
+            let option = flags.contains(NSEventModifierFlags::Option);
+            let command = flags.contains(NSEventModifierFlags::Command);
+            let shift = flags.contains(NSEventModifierFlags::Shift);
+            let any = control || option || command || shift;
+            if event.r#type() == NSEventType::FlagsChanged {
+                if any {
+                    last_mods = (control, option, command, shift);
+                    saw_modifiers = true;
+                } else if saw_modifiers {
+                    let (control, option, command, shift) = last_mods;
+                    return Some(Hotkey {
+                        key: 0xfe,
+                        control,
+                        option,
+                        command,
+                        shift,
+                        beep,
+                    });
+                }
+                continue;
+            }
+            if event.r#type() != NSEventType::KeyDown {
+                continue;
+            }
+            let key = event.keyCode() as u8;
+            if key == 53 {
+                return None;
+            }
+            return Some(Hotkey {
+                key,
+                control,
+                option,
+                command,
+                shift,
+                beep,
+            });
+        }
+    }
+
+    fn apply_typing_toggle(&mut self, id: isize, sender: &objc2_app_kit::NSControl) {
+        use objc2_app_kit::NSSwitch;
+        let on = sender
+            .downcast_ref::<NSSwitch>()
+            .is_some_and(|sw| sw.state() == objc2_app_kit::NSControlStateValueOn);
+        let v = i64::from(on);
+        let mut settings = self.typing.engine().settings().clone();
+        let key = match id {
+            10 => {
+                self.spell_preference = v;
+                settings.vCheckSpelling = v;
+                self.preferences.integer(ns_string!("Spelling"), v);
+                None
+            }
+            11 => {
+                settings.vUseModernOrthography = v;
+                Some("ModernOrthography")
+            }
+            12 => {
+                settings.vQuickTelex = v;
+                Some("QuickTelex")
+            }
+            13 => {
+                settings.vRestoreIfWrongSpelling = v;
+                Some("RestoreIfInvalidWord")
+            }
+            14 => {
+                settings.vUpperCaseFirstChar = v;
+                Some("UpperCaseFirstChar")
+            }
+            15 => {
+                settings.vAllowConsonantZFWJ = v;
+                Some("vAllowConsonantZFWJ")
+            }
+            16 => {
+                settings.vQuickStartConsonant = v;
+                Some("vQuickStartConsonant")
+            }
+            17 => {
+                settings.vQuickEndConsonant = v;
+                Some("vQuickEndConsonant")
+            }
+            18 => {
+                settings.vUseMacro = v;
+                Some("UseMacro")
+            }
+            19 => {
+                settings.vUseMacroInEnglishMode = v;
+                Some("UseMacroInEnglishMode")
+            }
+            20 => {
+                settings.vAutoCapsMacro = v;
+                Some("vAutoCapsMacro")
+            }
+            21 => {
+                settings.vOtherLanguage = v;
+                Some("vOtherLanguage")
+            }
+            22 => {
+                settings.vTempOffOpenKey = v;
+                Some("vTempOffOpenKey")
+            }
+            _ => None,
+        };
+        self.apply_settings(settings);
+        match key {
+            Some("ModernOrthography") => {
+                self.preferences.integer(ns_string!("ModernOrthography"), v);
+            }
+            Some("QuickTelex") => self.preferences.integer(ns_string!("QuickTelex"), v),
+            Some("RestoreIfInvalidWord") => {
+                self.preferences
+                    .integer(ns_string!("RestoreIfInvalidWord"), v);
+            }
+            Some("UpperCaseFirstChar") => {
+                self.preferences
+                    .integer(ns_string!("UpperCaseFirstChar"), v);
+            }
+            Some("vAllowConsonantZFWJ") => {
+                self.preferences
+                    .integer(ns_string!("vAllowConsonantZFWJ"), v);
+            }
+            Some("vQuickStartConsonant") => {
+                self.preferences
+                    .integer(ns_string!("vQuickStartConsonant"), v);
+            }
+            Some("vQuickEndConsonant") => {
+                self.preferences
+                    .integer(ns_string!("vQuickEndConsonant"), v);
+            }
+            Some("UseMacro") => self.preferences.integer(ns_string!("UseMacro"), v),
+            Some("UseMacroInEnglishMode") => {
+                self.preferences
+                    .integer(ns_string!("UseMacroInEnglishMode"), v);
+            }
+            Some("vAutoCapsMacro") => {
+                self.preferences.integer(ns_string!("vAutoCapsMacro"), v);
+            }
+            Some("vOtherLanguage") => self.preferences.integer(ns_string!("vOtherLanguage"), v),
+            Some("vTempOffOpenKey") => {
+                self.preferences.integer(ns_string!("vTempOffOpenKey"), v);
+            }
+            _ => {}
+        }
+        if id == 21 {
+            self.refresh_input_source();
+        }
+        self.refresh_ui();
+    }
+
+    fn persist_macros(&mut self) {
+        let bytes = self.typing.engine().macros().save_data();
+        self.preferences.set_data(ns_string!("macroData"), &bytes);
+        self.refresh_ui();
+    }
+
+    fn import_macros(&mut self) {
+        use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let panel = NSOpenPanel::openPanel(mtm);
+        panel.setCanChooseFiles(true);
+        panel.setAllowsMultipleSelection(false);
+        if panel.runModal() == NSModalResponseOK {
+            let urls = panel.URLs();
+            if let Some(url) = urls.firstObject() {
+                let path = url.path().map(|p| p.to_string());
+                if let Some(path) = path {
+                    let _ = self.typing.engine_mut().read_macros_from_file(&path, false);
+                    self.persist_macros();
+                }
+            }
+        }
+        let _ = mtm;
+    }
+
+    fn export_macros(&mut self) {
+        use objc2_app_kit::{NSModalResponseOK, NSSavePanel};
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let panel = NSSavePanel::savePanel(mtm);
+        if panel.runModal() == NSModalResponseOK {
+            if let Some(url) = panel.URL() {
+                let path = url.path().map(|p| p.to_string());
+                if let Some(path) = path {
+                    let _ = self.typing.engine().macros().save_to_file(&path);
+                }
+            }
+        }
+    }
+
+    fn run_convert(&mut self) {
+        let Some(ui) = &self.ui else {
+            return;
+        };
+        let text = ui.settings.convert.input_text();
+        let out = ui.settings.convert.ui_options().convert(&text);
+        ui.settings.convert.set_output(&out);
+    }
+
+    fn convert_paste(&mut self) {
+        use objc2_app_kit::NSPasteboard;
+        let pb = NSPasteboard::generalPasteboard();
+        if let Some(s) = unsafe { pb.stringForType(objc2_app_kit::NSPasteboardTypeString) } {
+            if let Some(ui) = &self.ui {
+                ui.settings.convert.set_input(&s.to_string());
+                self.run_convert();
+            }
+        }
+    }
+
+    fn convert_copy(&mut self) {
+        use objc2_app_kit::NSPasteboard;
+        let Some(ui) = &self.ui else {
+            return;
+        };
+        let text = ui.settings.convert.input_text();
+        let out = ui.settings.convert.ui_options().convert(&text);
+        let pb = NSPasteboard::generalPasteboard();
+        pb.clearContents();
+        let _ = unsafe {
+            pb.setString_forType(
+                &objc2_foundation::NSString::from_str(&out),
+                objc2_app_kit::NSPasteboardTypeString,
+            )
+        };
     }
 
     fn remember_selection(&mut self) {
@@ -502,6 +1066,13 @@ impl State {
         }
         self.refresh_input_source();
         self.flush_preferences();
+        if !accessibility::is_trusted() {
+            if let Some(ui) = &self.ui {
+                ui.poll_onboarding(false);
+            }
+        } else if let Some(ui) = &self.ui {
+            ui.poll_onboarding(true);
+        }
         false
     }
 }

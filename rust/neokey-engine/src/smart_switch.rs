@@ -51,4 +51,21 @@ impl SmartSwitch {
         self.cache_key = bundle_id.into();
         self.cache_data = language as i8;
     }
+
+    /// Read-only view of stored per-app values, ordered by bundle id.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, i8)> + '_ {
+        self.entries.iter().map(|(k, v)| (k.as_str(), *v))
+    }
+
+    pub fn language(stored: i8) -> i64 {
+        i64::from(stored & 1)
+    }
+
+    pub fn code_table(stored: i8) -> i64 {
+        i64::from(stored >> 1)
+    }
+
+    pub fn packed(language: i64, code_table: i64) -> i32 {
+        (language | (code_table << 1)) as i32
+    }
 }

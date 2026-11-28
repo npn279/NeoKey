@@ -1,6 +1,17 @@
 //! Safe, per-instance port of OpenKey's platform-independent engine.
 //! Packed output and macOS virtual key codes retain the original C++ semantics.
 #![deny(unsafe_code)]
+// The core port keeps upstream parentheses, casts and control flow for auditability.
+#![allow(
+    clippy::clone_on_copy,
+    clippy::collapsible_if,
+    clippy::derivable_impls,
+    clippy::double_parens,
+    clippy::manual_range_contains,
+    clippy::mixed_case_hex_literals,
+    clippy::needless_return,
+    clippy::unnecessary_cast
+)]
 pub mod convert;
 mod core;
 pub mod data;

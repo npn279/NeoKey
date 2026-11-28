@@ -97,6 +97,17 @@ fn smart_switch_keeps_language_and_rejects_truncated_records() {
     assert_eq!(t.get("org.editor", 1), 0);
     assert!(t.init(&[1, 0, 20]).is_err());
 }
+
+#[test]
+fn smart_switch_iter_lists_entries_and_packed_helpers_round_trip() {
+    let mut s = SmartSwitch::default();
+    s.set("com.a", SmartSwitch::packed(1, 2));
+    s.set("com.b", SmartSwitch::packed(0, 0));
+    let listed: Vec<_> = s.iter().collect();
+    assert_eq!(listed, vec![("com.a", 5), ("com.b", 0)]);
+    assert_eq!(SmartSwitch::language(5), 1);
+    assert_eq!(SmartSwitch::code_table(5), 2);
+}
 #[test]
 fn convert_tool_preserves_upstream_default_lowercase_behavior() {
     assert_eq!(
