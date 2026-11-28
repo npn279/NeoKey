@@ -1,9 +1,9 @@
 //! Native AppKit settings UI for NeoKey.
-//!
-//! Omitted from the design mockups (no UI yet): FreeMark (`vFreeMark`), status-bar icon
-//! style variants, launch-at-login, and the About-tab update checker.
+//! Includes the menu-bar panel, settings, clipboard tools and Accessibility onboarding.
 
+pub(super) mod alert;
 mod convert_map;
+pub(super) use convert_map::{CaseMode, ConvertUiOptions};
 mod help;
 mod hotkey;
 mod onboarding;
@@ -38,6 +38,15 @@ pub struct UiSnapshot {
     pub layout_compat: bool,
     pub chromium_fix: bool,
     pub hotkey: Hotkey,
+    pub convert_hotkey: Hotkey,
+    pub convert_alert: bool,
+    pub login_status: super::login_item::LoginStatus,
+    pub gray_icon: bool,
+    pub dock_icon: bool,
+    pub show_on_startup: bool,
+    pub update_on_startup: bool,
+    pub checking_updates: bool,
+    pub tap_ready: bool,
     pub macros: Vec<(String, String)>,
 }
 
@@ -109,15 +118,32 @@ pub mod tag {
     pub const MACRO_ADD: isize = 300;
     pub const MACRO_IMPORT: isize = 302;
     pub const MACRO_EXPORT: isize = 303;
-    pub const MACRO_ROW_DELETE: isize = 310;
+    pub const MACRO_ROW_DELETE: isize = 10_000;
     /// Per-app rows in Settings → Theo ứng dụng; the row index is the tag
     /// offset, read through `selectedSegment` (0 = Việt).
-    pub const APP_LANG: isize = 400;
+    pub const APP_LANG: isize = 12_000;
     pub const CONVERT_RUN: isize = 500;
     pub const CONVERT_PASTE: isize = 501;
     pub const CONVERT_COPY: isize = 502;
     pub const CONVERT_SWAP: isize = 503;
+    pub const CONVERT_OPTIONS: isize = 504;
+    pub const CONVERT_HOTKEY: isize = 505;
+    pub const CONVERT_ALERT: isize = 506;
+    pub const CONVERT_QUICK: isize = 507;
+    pub const CONVERT_CLEAR_HOTKEY: isize = 508;
     pub const LINK: isize = 600;
+    pub const UPDATE: isize = 610;
+    pub const STARTUP_UPDATE: isize = 611;
+    pub const LOGIN: isize = 620;
+    pub const GRAY_ICON: isize = 621;
+    pub const DOCK_ICON: isize = 622;
+    pub const STARTUP_UI: isize = 623;
+    pub const RESET: isize = 624;
+    pub const CLOSE_SETTINGS: isize = 625;
+    pub const OPEN_LOGIN_SETTINGS: isize = 626;
+    pub const OPEN_CONVERT: isize = 627;
+    pub const OPEN_MACROS: isize = 628;
+    pub const OPEN_ABOUT: isize = 629;
     pub const ONBOARDING_OPEN: isize = 700;
     pub const ONBOARDING_RETRY: isize = 701;
     pub const ONBOARDING_QUIT: isize = 702;

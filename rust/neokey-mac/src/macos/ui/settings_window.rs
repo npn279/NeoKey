@@ -129,13 +129,18 @@ impl SettingsWindow {
             | NSWindowStyleMask::Closable
             | NSWindowStyleMask::Miniaturizable;
         let window = unsafe { NSWindow::new(mtm) };
-        window.setFrame_display(content_rect, true);
         window.setStyleMask(style);
+        window.setContentSize(content_rect.size);
         window.setTitle(&ns("Cài đặt NeoKey"));
         unsafe {
             window.setReleasedWhenClosed(false);
         }
         let on_close = RcBlock::new(move |_: NonNull<NSNotification>| {
+            if objc2_foundation::NSUserDefaults::standardUserDefaults()
+                .boolForKey(objc2_foundation::ns_string!("vShowIconOnDock"))
+            {
+                return;
+            }
             if let Some(mtm) = MainThreadMarker::new() {
                 NSApplication::sharedApplication(mtm)
                     .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
@@ -294,7 +299,14 @@ impl SettingsWindow {
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
+        if !self.window.isVisible() {
+            self.window.center();
+        }
         self.window.makeKeyAndOrderFront(None);
+    }
+
+    pub fn window(&self) -> &NSWindow {
+        &self.window
     }
 
     pub(crate) fn select(&self, section: SettingsSection) {
@@ -335,7 +347,7 @@ impl SettingsWindow {
         self.macros.refresh(snap, &self.target);
         self.apps.refresh(snap);
         self.convert.refresh(snap);
-        self.about.refresh(dark);
+        self.about.refresh(snap, dark);
     }
 
     /// Debug snapshot support: the window's content view (`ui::snapshot`).

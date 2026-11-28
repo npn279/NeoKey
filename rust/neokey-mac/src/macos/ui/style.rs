@@ -39,12 +39,10 @@ pub const ACCENT_DARK: (f64, f64, f64) = (
 
 /// Right-click control panel.
 pub const PANEL_WIDTH: f64 = 292.0;
-pub const PANEL_HEIGHT: f64 = 224.0;
+pub const PANEL_HEIGHT: f64 = 336.0;
 pub const SETTINGS_WIDTH: f64 = 780.0;
 pub const SETTINGS_HEIGHT: f64 = 620.0;
 pub const SIDEBAR_WIDTH: f64 = 210.0;
-pub const ONBOARDING_WIDTH: f64 = 720.0;
-pub const ONBOARDING_HEIGHT: f64 = 560.0;
 
 /// Outer margin of cards and lists.
 pub const MARGIN: f64 = 20.0;

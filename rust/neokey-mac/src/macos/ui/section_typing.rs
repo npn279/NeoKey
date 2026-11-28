@@ -67,6 +67,16 @@ const GROUPS: &[(&str, &[PrefRow])] = &[
         "Chính tả",
         &[
             ("Kiểm tra chính tả", 10, SPELLING_TOOLTIP),
+            (
+                "Bỏ dấu tự do",
+                23,
+                "Cho phép thêm dấu ngoài các vị trí quy định của kiểu gõ.",
+            ),
+            (
+                "Tắt kiểm tra chính tả tạm thời",
+                24,
+                "Nhấn rồi nhả riêng phím ⌃ để đổi kiểm tra chính tả trong từ đang gõ.",
+            ),
             ("Chính tả hiện đại", 11, MODERN_ORTHO_TOOLTIP),
             ("Khôi phục khi sai chính tả", 13, RESTORE_TOOLTIP),
         ],
@@ -101,11 +111,21 @@ const GROUPS: &[(&str, &[PrefRow])] = &[
         &[
             ("Viết hoa chữ cái đầu", 14, UPPER_CASE_FIRST_TOOLTIP),
             (
+                "Sửa lỗi gõ trong trình duyệt",
+                25,
+                "Bật cách gửi phím tương thích khi sửa từ trong ứng dụng.",
+            ),
+            (
                 "Chặn gõ khi bàn phím không phải tiếng Anh",
                 21,
                 OTHER_LANGUAGE_TOOLTIP,
             ),
             ("Tắt tạm NeoKey", 22, TEMP_OFF_TOOLTIP),
+            (
+                "Nhớ bảng mã theo ứng dụng",
+                26,
+                "Khôi phục bảng mã đã chọn khi quay lại ứng dụng có ghi nhớ ngôn ngữ.",
+            ),
         ],
     ),
 ];
@@ -275,6 +295,10 @@ fn pref_value(snap: &UiSnapshot, offset: isize) -> bool {
         20 => settings.vAutoCapsMacro != 0,
         21 => settings.vOtherLanguage != 0,
         22 => settings.vTempOffOpenKey != 0,
+        23 => settings.vFreeMark != 0,
+        24 => settings.vTempOffSpelling != 0,
+        25 => settings.vFixRecommendBrowser != 0,
+        26 => settings.vRememberCode != 0,
         _ => false,
     }
 }

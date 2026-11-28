@@ -130,7 +130,9 @@ impl RustCallback {
             }) {
                 OutputAction::Pass => true,
                 OutputAction::Suppress => false,
-                OutputAction::ToggleLanguage => unreachable!("hotkeys disabled"),
+                OutputAction::ToggleLanguage | OutputAction::QuickConvert => {
+                    unreachable!("hotkeys disabled")
+                }
                 OutputAction::ExtraBackspaces(count) => {
                     self.output.extra_backspaces(proxy, count);
                     true

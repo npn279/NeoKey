@@ -6,6 +6,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize};
 use super::style::*;
 use super::tag;
 use super::UiSnapshot;
+use crate::macos::login_item::LoginStatus;
 use crate::macos::status_menu::MenuTarget;
 
 /// The hotkey button's own tooltip is the recorded chord (set in `refresh`);
@@ -31,6 +32,11 @@ pub struct GeneralSection {
     step_switch: Retained<NSSwitch>,
     layout_switch: Retained<NSSwitch>,
     chromium_switch: Retained<NSSwitch>,
+    login_switch: Retained<NSSwitch>,
+    login_settings: Retained<NSButton>,
+    startup_switch: Retained<NSSwitch>,
+    gray_switch: Retained<NSSwitch>,
+    dock_switch: Retained<NSSwitch>,
 }
 
 impl GeneralSection {
@@ -73,8 +79,65 @@ impl GeneralSection {
         add_control(&hotkey_card, &beep_switch, beep_rect);
         view.addSubview(&hotkey_card);
 
+        let startup_top = 184.0;
+        let startup_card = card(mtm, MARGIN, startup_top, card_w, 4.0 * ROW_HEIGHT + 12.0);
+        let mut switches = [
+            (
+                "Mở khi đăng nhập",
+                tag::LOGIN,
+                "Tự mở NeoKey khi đăng nhập vào macOS.",
+            ),
+            (
+                "Hiện cài đặt khi mở NeoKey",
+                tag::STARTUP_UI,
+                "Mở cửa sổ Cài đặt mỗi khi NeoKey khởi động.",
+            ),
+            (
+                "Biểu tượng thanh menu đơn sắc",
+                tag::GRAY_ICON,
+                "Dùng biểu tượng đơn sắc thích ứng với màu thanh menu.",
+            ),
+            (
+                "Hiện biểu tượng trong Dock",
+                tag::DOCK_ICON,
+                "Giữ biểu tượng NeoKey trong Dock khi đóng Cài đặt.",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (text, action, tip))| {
+            let y = 6.0 + index as f64 * ROW_HEIGHT;
+            if index > 0 {
+                row_separator(mtm, &startup_card, y);
+            }
+            let rect = row_with_tooltip(
+                mtm,
+                &startup_card,
+                y,
+                text,
+                tip,
+                switch_w(mtm),
+                switch_h(mtm),
+            );
+            let toggle = make_switch(mtm, action, false);
+            toggle.setToolTip(Some(&ns(tip)));
+            add_control(&startup_card, &toggle, rect);
+            toggle
+        });
+        let login_switch = switches.next().unwrap();
+        let startup_switch = switches.next().unwrap();
+        let gray_switch = switches.next().unwrap();
+        let dock_switch = switches.next().unwrap();
+        let login_settings = make_button(mtm, "Cần phê duyệt", tag::OPEN_LOGIN_SETTINGS);
+        login_settings.setToolTip(Some(&ns(
+            "Mở mục Đăng nhập trong Cài đặt hệ thống để cho phép NeoKey tự mở.",
+        )));
+        place(&login_settings, card_w - 218.0, 13.0, 146.0, 30.0);
+        startup_card.addSubview(&login_settings);
+        view.addSubview(&startup_card);
+
         // Nâng cao.
-        let advanced_top = 80.0 + 2.0 * ROW_HEIGHT + 12.0 + 18.0;
+        let advanced_top = startup_top + 4.0 * ROW_HEIGHT + 27.0;
         let advanced_header = section_header(mtm, "Nâng cao");
         place(&advanced_header, MARGIN, advanced_top, 300.0, 16.0);
         view.addSubview(&advanced_header);
@@ -125,6 +188,27 @@ impl GeneralSection {
         add_control(&advanced_card, &chromium_switch, chromium_rect);
         view.addSubview(&advanced_card);
 
+        let reset = make_quiet_button(mtm, "Khôi phục mặc định…", tag::RESET);
+        let close = make_button(mtm, "Đóng", tag::CLOSE_SETTINGS);
+        place(&reset, MARGIN, h - 46.0, 180.0, 30.0);
+        place(&close, w - MARGIN - 82.0, h - 46.0, 82.0, 30.0);
+        view.addSubview(&reset);
+        view.addSubview(&close);
+        for control in [
+            &login_switch as &objc2_app_kit::NSControl,
+            &startup_switch,
+            &gray_switch,
+            &dock_switch,
+            &login_settings,
+            &reset,
+            &close,
+        ] {
+            unsafe {
+                control.setTarget(Some(target));
+                control.setAction(Some(sel!(uiAction:)));
+            }
+        }
+
         unsafe {
             hotkey_btn.setTarget(Some(target));
             hotkey_btn.setAction(Some(sel!(uiAction:)));
@@ -145,6 +229,11 @@ impl GeneralSection {
             step_switch,
             layout_switch,
             chromium_switch,
+            login_switch,
+            login_settings,
+            startup_switch,
+            gray_switch,
+            dock_switch,
         }
     }
 
@@ -156,12 +245,35 @@ impl GeneralSection {
         self.hotkey_btn.setTitle(&ns("Nhấn tổ hợp… (Esc huỷ)"));
     }
 
+    pub fn refresh_login(&self, status: LoginStatus) {
+        self.login_switch
+            .setEnabled(status != LoginStatus::Unavailable);
+        self.login_switch.setToolTip(Some(&ns(match status {
+            LoginStatus::Unavailable => "Cần mở NeoKey.app trên macOS 13 trở lên.",
+            LoginStatus::NeedsApproval => "NeoKey đang chờ phê duyệt trong Cài đặt hệ thống.",
+            _ => "Tự mở NeoKey khi đăng nhập vào macOS.",
+        })));
+        set_switch(
+            &self.login_switch,
+            matches!(status, LoginStatus::Enabled | LoginStatus::NeedsApproval),
+        );
+        self.login_settings
+            .setHidden(status != LoginStatus::NeedsApproval);
+    }
+
     pub fn refresh(&self, snap: &UiSnapshot) {
         // Compact symbols (⌃⌥⌘⇧…) never truncate, unlike the spaced labels;
         // the full spaced chord stays available as a tooltip.
         self.hotkey_btn.setTitle(&ns(&snap.hotkey.format_symbols()));
         self.hotkey_btn
             .setToolTip(Some(&ns(&snap.hotkey.format_labels())));
+        self.hotkey_btn.setEnabled(snap.tap_ready);
+        self.refresh_login(snap.login_status);
+        set_switch(&self.startup_switch, snap.show_on_startup);
+        set_switch(&self.gray_switch, snap.gray_icon);
+        set_switch(&self.dock_switch, snap.dock_icon);
+        self.chromium_switch
+            .setEnabled(snap.settings.vFixRecommendBrowser != 0);
         set_switch(&self.beep_switch, snap.hotkey.beep);
         set_switch(&self.step_switch, snap.step_by_step);
         set_switch(&self.layout_switch, snap.layout_compat);

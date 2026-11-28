@@ -21,6 +21,10 @@ impl StartupAccessibility {
         }
     }
 
+    pub(super) fn recover_after_relaunch_failure(&mut self) {
+        *self = Self::Ready;
+    }
+
     pub(super) fn action(&mut self, trusted: bool, bundled: bool) -> Action {
         if !trusted {
             return Action::Wait;
@@ -52,6 +56,14 @@ mod tests {
         assert_eq!(startup.action(true, true), Action::Wait);
         assert_eq!(startup.action(false, true), Action::Wait);
         assert_eq!(startup.action(true, true), Action::Wait);
+    }
+
+    #[test]
+    fn failed_relaunch_falls_back_to_installing_the_tap() {
+        let mut startup = StartupAccessibility::new(false);
+        assert_eq!(startup.action(true, true), Action::Relaunch);
+        startup.recover_after_relaunch_failure();
+        assert_eq!(startup.action(true, true), Action::InstallTap);
     }
 
     #[test]

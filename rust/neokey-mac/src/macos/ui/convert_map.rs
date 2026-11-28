@@ -22,7 +22,7 @@ impl CaseMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Keep => "Giữ nguyên",
+            Self::Keep => "Mặc định",
             Self::Upper => "VIẾT HOA",
             Self::Lower => "viết thường",
             Self::Sentence => "Hoa đầu câu",

@@ -10,7 +10,12 @@ cargo build --locked --release -p neokey-mac --target-dir "$target"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 install -m 755 "$target/release/neokey-mac" "$bundle/Contents/MacOS/neokey-mac"
 install -m 644 "$workspace/neokey-mac/Info.plist" "$bundle/Contents/Info.plist"
+build_date=$(date -r "$(stat -f '%m' "$target/release/neokey-mac")" '+%Y-%m-%d')
+plutil -insert NeoKeyBuildDate -string "$build_date" "$bundle/Contents/Info.plist"
 install -m 644 "$workspace/neokey-mac/assets/AppIcon.icns" "$bundle/Contents/Resources/AppIcon.icns"
+for icon in "$workspace/neokey-mac/assets"/Status*.png; do
+    install -m 644 "$icon" "$bundle/Contents/Resources/"
+done
 codesign -s - --force "$bundle"
 codesign --verify --strict "$bundle"
 printf '%s\n' "$bundle"

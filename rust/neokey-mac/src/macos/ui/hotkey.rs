@@ -4,7 +4,7 @@
 //! - bits 0–7: key code (`0xFE` = modifiers only)
 //! - bit 8: Control, 9: Option, 10: Command, 11: Shift
 //! - bit 15 (`0x8000`): beep on language switch
-//! - bits 24–31: key code copy (legacy)
+//! - bits 24–31: display byte (OpenKey stored a character here)
 
 use neokey_engine::data::{
     KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_A, KEY_B, KEY_C,
@@ -46,6 +46,10 @@ impl Hotkey {
             shift: status & SHIFT_BIT != 0,
             beep: status & BEEP_BIT != 0,
         }
+    }
+
+    pub fn from_convert_status(status: i64) -> Self {
+        Self::from_status(if status == 0 { 0xfe00_00fe } else { status }).with_beep(false)
     }
 
     pub fn to_status(self) -> i64 {
@@ -96,6 +100,15 @@ impl Hotkey {
             out.push('—');
         }
         out
+    }
+
+    pub fn quick_convert_title(&self) -> String {
+        let chord = self.format_symbols();
+        if chord == "—" {
+            "Chuyển mã nhanh".into()
+        } else {
+            format!("Chuyển mã nhanh - [{chord}]")
+        }
     }
 
     /// Spaced labels for the settings capture control, e.g. `⌥ Option + Z`.

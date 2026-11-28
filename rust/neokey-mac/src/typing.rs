@@ -35,6 +35,7 @@ pub enum OutputAction {
     Pass,
     Suppress,
     ToggleLanguage,
+    QuickConvert,
     Replace(Edit),
     ExtraBackspaces(usize),
 }
@@ -145,6 +146,7 @@ pub struct Typing {
     // macOS virtual key codes are seven bits.
     consumed_keys: [bool; 128],
     shortcut_down: Option<u16>,
+    convert_hotkey: u32,
     held_modifiers: u64,
     modifiers_used: bool,
 }
@@ -159,6 +161,7 @@ impl Typing {
             widths: VecDeque::new(),
             consumed_keys: [false; 128],
             shortcut_down: None,
+            convert_hotkey: 0,
             held_modifiers: 0,
             modifiers_used: false,
         }
@@ -175,6 +178,10 @@ impl Typing {
     pub fn set_app(&mut self, app: AppBehavior) {
         self.app = app;
         self.reset_session();
+    }
+
+    pub fn set_convert_hotkey(&mut self, status: i64) {
+        self.convert_hotkey = status as u32;
     }
 
     pub fn set_chromium_fix(&mut self, enabled: bool) {
@@ -202,6 +209,13 @@ impl Typing {
         self.shortcut_down = None;
         self.held_modifiers = 0;
         self.modifiers_used = false;
+    }
+
+    pub fn consume_key_until_release(&mut self, key: u16) {
+        if let Some(consumed) = self.consumed_keys.get_mut(key as usize) {
+            *consumed = true;
+            self.shortcut_down = Some(key);
+        }
     }
 
     pub fn process_key(&mut self, input: Input) -> OutputAction {
@@ -235,7 +249,9 @@ impl Typing {
                     let passes_down = match &action {
                         OutputAction::Pass | OutputAction::ExtraBackspaces(_) => true,
                         OutputAction::Replace(edit) => edit.replay_trigger,
-                        OutputAction::Suppress | OutputAction::ToggleLanguage => false,
+                        OutputAction::Suppress
+                        | OutputAction::ToggleLanguage
+                        | OutputAction::QuickConvert => false,
                     };
                     // One physical key-up follows the initial key-down and any repeats.
                     // Pass it if the foreground app received any of those key-downs.
@@ -250,16 +266,25 @@ impl Typing {
         }
     }
 
-    fn hotkey_matches(&self, key: u16, flags: u64) -> bool {
-        let setting = self.engine.settings().vSwitchKeyStatus as u32;
+    fn shortcut(&self, key: u16, flags: u64) -> Option<OutputAction> {
+        if Self::hotkey_matches(self.engine.settings().vSwitchKeyStatus as u32, key, flags) {
+            Some(OutputAction::ToggleLanguage)
+        } else if Self::hotkey_matches(self.convert_hotkey, key, flags) {
+            Some(OutputAction::QuickConvert)
+        } else {
+            None
+        }
+    }
+
+    fn hotkey_matches(setting: u32, key: u16, flags: u64) -> bool {
+        if setting == 0 || setting & !0x8000 == EMPTY_HOTKEY || key != (setting & 0xff) as u16 {
+            return false;
+        }
         let modifiers = (((setting >> 8) & 1) as u64 * CONTROL)
             | (((setting >> 9) & 1) as u64 * OPTION)
             | (((setting >> 10) & 1) as u64 * COMMAND)
             | (((setting >> 11) & 1) as u64 * SHIFT);
-        setting != 0
-            && setting & !0x8000 != EMPTY_HOTKEY
-            && key == (setting & 0xff) as u16
-            && flags & SHORTCUT_MODIFIERS == modifiers
+        flags & SHORTCUT_MODIFIERS == modifiers
     }
 
     fn flags_changed(&mut self, modifiers: u64) -> OutputAction {
@@ -270,9 +295,9 @@ impl Typing {
         if previous & !modifiers == 0 || self.modifiers_used {
             return OutputAction::Pass;
         }
-        if self.hotkey_matches(MODIFIERS_ONLY, previous) {
+        if let Some(action) = self.shortcut(MODIFIERS_ONLY, previous) {
             self.modifiers_used = true;
-            return OutputAction::ToggleLanguage;
+            return action;
         }
         if self.engine.settings().vTempOffSpelling != 0 && previous & CONTROL != 0 {
             self.engine.temp_off_spell_checking();
@@ -289,9 +314,11 @@ impl Typing {
         if repeat && self.shortcut_down == Some(physical_key) {
             return OutputAction::Suppress;
         }
-        if !repeat && self.hotkey_matches(key, flags) {
-            self.shortcut_down = Some(physical_key);
-            return OutputAction::ToggleLanguage;
+        if !repeat {
+            if let Some(action) = self.shortcut(key, flags) {
+                self.shortcut_down = Some(physical_key);
+                return action;
+            }
         }
 
         let caps = if flags & SHIFT != 0 {
@@ -827,6 +854,53 @@ mod tests {
         assert_eq!(
             typing.process_key(down(KEY_DELETE, 0)),
             OutputAction::ExtraBackspaces(1)
+        );
+    }
+}
+
+#[cfg(test)]
+mod quick_convert_tests {
+    use super::*;
+
+    #[test]
+    fn imported_conversion_chords_preserve_language_priority_and_consume_the_key() {
+        let mut typing = Typing::new(Settings {
+            vSwitchKeyStatus: i64::from(DEFAULT_HOTKEY),
+            ..Settings::default()
+        });
+        let down = |code, repeat| Input::KeyDown {
+            key: code,
+            layout_key: code,
+            flags: OPTION,
+            repeat,
+        };
+        typing.set_convert_hotkey(0x7a00_0206);
+        assert_eq!(
+            typing.process_key(down(6, false)),
+            OutputAction::ToggleLanguage
+        );
+        typing.process_key(Input::KeyUp(6));
+        // OpenKey stored ASCII x in the high byte and macOS key code 7 below.
+        typing.set_convert_hotkey(0x7800_0207);
+        assert_eq!(
+            typing.process_key(down(7, false)),
+            OutputAction::QuickConvert
+        );
+        assert_eq!(typing.process_key(down(7, true)), OutputAction::Suppress);
+        assert_eq!(typing.process_key(Input::KeyUp(7)), OutputAction::Suppress);
+
+        typing.set_convert_hotkey(0xfe00_09fe);
+        assert_eq!(
+            typing.process_key(Input::FlagsChanged(CONTROL | SHIFT)),
+            OutputAction::Pass
+        );
+        assert_eq!(
+            typing.process_key(Input::FlagsChanged(SHIFT)),
+            OutputAction::QuickConvert
+        );
+        assert_eq!(
+            typing.process_key(Input::FlagsChanged(0)),
+            OutputAction::Pass
         );
     }
 }

@@ -1,7 +1,6 @@
 //! Right-click control panel: compact, opaque, one accent.
 //!
-//! Everything heavy lives in the Settings window; the panel keeps only the
-//! language toggle, the input type, the spelling switch, and app exit.
+//! Provides language, typing and clipboard actions plus shortcuts to the settings sections.
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -17,7 +16,9 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSRectEdge, NSSize};
 
-use super::convert_map::{input_type_help, INPUT_TYPE_LABELS, INPUT_TYPE_TOOLTIPS};
+use super::convert_map::{
+    input_type_help, CODE_TABLE_LABELS, INPUT_TYPE_LABELS, INPUT_TYPE_TOOLTIPS,
+};
 use super::help::add_help;
 use super::style::*;
 use super::tag;
@@ -32,7 +33,9 @@ pub struct Panel {
     lang_segment: Retained<objc2_app_kit::NSSegmentedControl>,
     subtitle: Retained<objc2_app_kit::NSTextField>,
     input_popup: Retained<NSPopUpButton>,
+    code_popup: Retained<NSPopUpButton>,
     spell_switch: Retained<NSSwitch>,
+    quick_convert: Retained<objc2_app_kit::NSButton>,
     /// Global mouse-down monitor installed while the panel is open. A
     /// Transient popover only closes when NeoKey resigns active, but macOS 14+
     /// may refuse to activate a menu-bar app, so clicks in other apps would
@@ -87,10 +90,25 @@ impl Panel {
         input_popup.setTag(tag::INPUT_TYPE);
         place(&input_popup, PANEL_WIDTH - 166.0, 97.0, 150.0, 26.0);
 
-        // The single switch row.
+        let code_label = label(mtm, "Bảng mã", 13.0, false);
+        place(&code_label, 16.0, 141.0, 100.0, 20.0);
+        root.addSubview(&code_label);
+        let code_popup = NSPopUpButton::new(mtm);
+        for table in CODE_TABLE_LABELS {
+            code_popup.addItemWithTitle(&ns(table));
+        }
+        code_popup.setTag(tag::CODE_TABLE);
+        place(&code_popup, PANEL_WIDTH - 188.0, 135.0, 172.0, 26.0);
+        unsafe {
+            code_popup.setTarget(Some(target));
+            code_popup.setAction(Some(sel!(uiAction:)));
+        }
+        root.addSubview(&code_popup);
+
+        // Spelling row.
         let spell_label = label(mtm, "Kiểm tra chính tả", 13.0, false);
         spell_label.setToolTip(Some(&ns(SPELL_TOOLTIP)));
-        place(&spell_label, 16.0, 141.0, 200.0, 18.0);
+        place(&spell_label, 16.0, 179.0, 200.0, 18.0);
         root.addSubview(&spell_label);
         add_help(mtm, &root, &spell_label, SPELL_TOOLTIP);
         let spell_switch = make_switch(mtm, tag::PANEL_SPELL, true);
@@ -98,16 +116,42 @@ impl Panel {
         place(
             &spell_switch,
             PANEL_WIDTH - 16.0 - switch_w(mtm),
-            150.0 - switch_h(mtm) / 2.0,
+            188.0 - switch_h(mtm) / 2.0,
             switch_w(mtm),
             switch_h(mtm),
         );
+
+        // Clipboard action in the menu-bar panel.
+        let quick_convert = make_quiet_button(mtm, "Chuyển mã nhanh", tag::CONVERT_QUICK);
+        quick_convert.setToolTip(Some(&ns("Chuyển mã văn bản và HTML trong clipboard.")));
+        place(&quick_convert, 16.0, 215.0, PANEL_WIDTH - 32.0, 30.0);
+        unsafe {
+            quick_convert.setTarget(Some(target));
+            quick_convert.setAction(Some(sel!(uiAction:)));
+        }
+
+        for (index, (title, action)) in [
+            ("Chuyển mã…", tag::OPEN_CONVERT),
+            ("Gõ tắt…", tag::OPEN_MACROS),
+            ("Giới thiệu", tag::OPEN_ABOUT),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let link = make_quiet_button(mtm, title, action);
+            place(&link, 16.0 + index as f64 * 88.0, 249.0, 84.0, 28.0);
+            unsafe {
+                link.setTarget(Some(target));
+                link.setAction(Some(sel!(uiAction:)));
+            }
+            root.addSubview(&link);
+        }
 
         // Footer.
         let separator = separator_box(
             mtm,
             NSRect::new(
-                NSPoint::new(16.0, 177.0),
+                NSPoint::new(16.0, 289.0),
                 NSSize::new(PANEL_WIDTH - 32.0, 1.0),
             ),
         );
@@ -115,11 +159,11 @@ impl Panel {
         settings_btn.setToolTip(Some(&ns(
             "Phím tắt, bảng mã, gõ tắt, ngôn ngữ theo từng ứng dụng, chuyển mã…",
         )));
-        place(&settings_btn, 16.0, 185.0, 120.0, 28.0);
+        place(&settings_btn, 16.0, 297.0, 120.0, 28.0);
         settings_btn.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
         let quit_btn = make_quiet_button(mtm, "Thoát", tag::QUIT);
         quit_btn.setToolTip(Some(&ns("Tắt NeoKey; bàn phím trở lại gõ bình thường")));
-        place(&quit_btn, PANEL_WIDTH - 86.0, 185.0, 70.0, 28.0);
+        place(&quit_btn, PANEL_WIDTH - 86.0, 297.0, 70.0, 28.0);
         quit_btn.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
 
         unsafe {
@@ -145,6 +189,7 @@ impl Panel {
             &lang_segment,
             &input_popup,
             &spell_switch,
+            &quick_convert,
             &separator,
             &settings_btn,
             &quit_btn,
@@ -162,7 +207,9 @@ impl Panel {
             lang_segment,
             subtitle,
             input_popup,
+            code_popup,
             spell_switch,
+            quick_convert,
             outside_click: Rc::new(RefCell::new(None)),
         }
     }
@@ -200,6 +247,13 @@ impl Panel {
         *self.outside_click.borrow_mut() = monitor;
     }
 
+    pub fn close(&self) {
+        if self.popover.isShown() {
+            self.popover.close();
+            remove_monitor(&self.outside_click);
+        }
+    }
+
     pub fn refresh(&self, snap: &UiSnapshot, dark: bool) {
         let accent = accent_color(dark);
         let vi = snap.settings.vLanguage != 0;
@@ -228,6 +282,10 @@ impl Panel {
         self.input_popup
             .setToolTip(Some(&ns(INPUT_TYPE_TOOLTIPS[input_type])));
         set_switch(&self.spell_switch, snap.spelling);
+        self.code_popup
+            .selectItemAtIndex(snap.settings.vCodeTable as isize);
+        self.quick_convert
+            .setTitle(&ns(&snap.convert_hotkey.quick_convert_title()));
     }
 
     /// Debug snapshot support: the popover's root view (`ui::snapshot`).

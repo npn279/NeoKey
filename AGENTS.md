@@ -47,4 +47,4 @@ Code lives under `Sources/OpenKey/`:
 
 ## Versioning
 
-The version lives in two places, and both must be bumped together: `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in `macOS/OpenKey.xcodeproj/project.pbxproj`, and `version.json` at the repo root. The app's update checker (`OpenKeyManager.m`) fetches `version.json` from `npn279/NeoKey` on `main` and compares `versionCode`. Record changes in `CHANGELOG.md`.
+The version lives in two places, and both must be bumped together: `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in `macOS/OpenKey.xcodeproj/project.pbxproj`, and `version.json` at the repo root. The Rust app keeps its own copy in `rust/neokey-mac/Info.plist` (`CFBundleShortVersionString` / `CFBundleVersion`), which its update checker compares with `versionCode`; bump it too. The app's update checker (`OpenKeyManager.m`) fetches `version.json` from `npn279/NeoKey` on `main` and compares `versionCode`. Record changes in `CHANGELOG.md`.

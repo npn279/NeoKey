@@ -55,39 +55,31 @@ open target/NeoKey.app
 ```
 
 The script builds and ad-hoc signs `target/NeoKey.app`. Grant NeoKey access
-under **System Settings → Privacy & Security → Accessibility** when prompted. If
-you grant access while the app bundle is running, NeoKey relaunches once so
-the new process can use Accessibility in Spotlight, Alfred and Raycast. The bare
+under **System Settings → Privacy & Security → Accessibility** using the
+first-run window. The app bundle relaunches once when access is granted so the new
+process can use Accessibility in Spotlight, Alfred and Raycast. The bare
 binary enables typing after permission is granted and logs a recommendation to
 restart it for launcher support. Disable other Vietnamese input methods while
 using NeoKey so only one tool processes each key.
 
-Left-click the **V** or **E** status item to switch language. Right-click for
-Telex, VNI, Simple Telex 1/2, the five code tables, spell check and Quit. The
-default hotkey is **Option+Z**. The app uses the existing typing preference key
-names and binary macro and smart-switch formats in the separate
-`com.neokey.rust` defaults domain. Set options outside the menu with `defaults`
-while the app is quit, then relaunch it. For example:
+Left-click the status icon to switch language, or right-click for the control
+panel. The default language shortcut is **Option+Z**. The settings window
+includes typing options, macros, per-app language and code-table memory,
+clipboard conversion and its shortcut, and an update check. Launch at login is
+managed through macOS Login Items and requires macOS 13 or later and the app
+bundle. The update check compares the bundle's build number with the published
+version and opens GitHub Releases when you choose to update.
 
-```sh
-defaults write com.neokey.rust SendKeyStepByStep -int 1
-```
-
-The bare Cargo executable uses its process defaults domain. Launch the app bundle
-to use the `com.neokey.rust` preferences.
+On first launch, the bundle imports supported preferences, macros and per-app
+data from `com.tuyenmai.openkey` into `com.neokey.rust`. Existing Rust values take
+precedence. The bare Cargo executable uses its process defaults domain.
 
 The event tap uses a bounded PID-to-bundle-ID cache and a one-second watchdog.
 Spotlight, Alfred and Raycast get a UTF-16 Accessibility edit with an 80 ms
 messaging timeout per AX request. When the field cannot be rewritten, the app
 selects the composing text with Shift+Left and types its replacement.
-
-The Rust app covers typing and the menu bar controls. The Objective-C app's
-preferences window, macro editor, clipboard conversion tool and its shortcut,
-login item, update checker, and onboarding screens are outside this app's scope.
-Existing Objective-C preferences are in a separate domain, so settings and macros
-start fresh unless copied into the Rust domain. Input-source language changes are
-picked up by the one-second watchdog. Secure Input can prevent global taps from
-receiving keystrokes.
+Input-source language changes are picked up by the one-second watchdog.
+Secure Input can prevent global taps from receiving keystrokes.
 
 For callback benchmarks, the library target exports `neokey_mac::typing`.
 Feed platform virtual key codes, modifier flags and mouse events to

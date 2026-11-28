@@ -2,7 +2,7 @@
 
 use objc2::rc::Retained;
 use objc2::{sel, MainThreadMarker};
-use objc2_app_kit::{NSPopUpButton, NSSwitch, NSTextField, NSView};
+use objc2_app_kit::{NSButton, NSPopUpButton, NSSwitch, NSTextField, NSView};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 use super::convert_map::{CaseMode, CODE_TABLE_LABELS};
@@ -16,7 +16,7 @@ const FROM_TOOLTIP: &str = "Bảng mã của văn bản gốc cần chuyển.";
 const TO_TOOLTIP: &str = "Bảng mã đích sau khi chuyển.";
 const SWAP_TOOLTIP: &str = "Đảo hai bảng mã: Từ thành Sang và ngược lại.";
 const CASE_TOOLTIP: &str =
-    "Kiểu chữ của kết quả: giữ nguyên, viết hoa hết, viết thường, hoa đầu câu hoặc hoa mỗi từ.";
+    "Kiểu chữ của kết quả: mặc định, viết hoa hết, viết thường, hoa đầu câu hoặc hoa mỗi từ.";
 /// `remove_mark` outputs the bare base letter (đ → d) and lowercases it unless
 /// a case mode is chosen — verified against `convert.rs` / ConvertTool.cpp.
 const REMOVE_MARK_TOOLTIP: &str =
@@ -35,6 +35,9 @@ pub struct ConvertSection {
     to_popup: Retained<NSPopUpButton>,
     case_popup: Retained<NSPopUpButton>,
     remove_mark: Retained<NSSwitch>,
+    hotkey: Retained<NSButton>,
+    clear_hotkey: Retained<NSButton>,
+    alert: Retained<NSSwitch>,
     input: Retained<NSTextField>,
     output: Retained<NSTextField>,
 }
@@ -49,7 +52,7 @@ impl ConvertSection {
         let card_w = w - 2.0 * MARGIN;
 
         // Conversion options.
-        let options_card = card(mtm, MARGIN, 58.0, card_w, 4.0 * ROW_HEIGHT + 12.0);
+        let options_card = card(mtm, MARGIN, 58.0, card_w, 6.0 * ROW_HEIGHT + 12.0);
         let from_rect = row_with_tooltip(
             mtm,
             &options_card,
@@ -122,14 +125,51 @@ impl ConvertSection {
             switch_w(mtm),
             switch_h(mtm),
         );
-        let remove_mark = make_switch(mtm, tag::CONVERT_RUN + 10, false);
+        let remove_mark = make_switch(mtm, tag::CONVERT_OPTIONS, false);
         remove_mark.setToolTip(Some(&ns(REMOVE_MARK_TOOLTIP)));
         add_control(&options_card, &remove_mark, mark_rect);
+        row_separator(mtm, &options_card, 4.0 * ROW_HEIGHT + 6.0);
+        let hotkey_tip = "Bấm để ghi phím tắt chuyển mã nội dung clipboard. Nhấn Esc để huỷ.";
+        let hotkey_rect = row_with_tooltip(
+            mtm,
+            &options_card,
+            4.0 * ROW_HEIGHT + 6.0,
+            "Phím tắt chuyển mã nhanh",
+            hotkey_tip,
+            150.0,
+            30.0,
+        );
+        let hotkey = make_button(mtm, "Ghi phím…", tag::CONVERT_HOTKEY);
+        add_control(&options_card, &hotkey, hotkey_rect);
+        let clear_hotkey = make_icon_button(mtm, "xmark", "×", tag::CONVERT_CLEAR_HOTKEY);
+        clear_hotkey.setToolTip(Some(&ns("Xoá phím tắt chuyển mã nhanh")));
+        place(
+            &clear_hotkey,
+            hotkey_rect.origin.x - 34.0,
+            hotkey_rect.origin.y,
+            28.0,
+            30.0,
+        );
+        options_card.addSubview(&clear_hotkey);
+        row_separator(mtm, &options_card, 5.0 * ROW_HEIGHT + 6.0);
+        let alert_tip = "Hiện thông báo khi đã chuyển mã nội dung clipboard.";
+        let alert_rect = row_with_tooltip(
+            mtm,
+            &options_card,
+            5.0 * ROW_HEIGHT + 6.0,
+            "Báo khi chuyển mã xong",
+            alert_tip,
+            switch_w(mtm),
+            switch_h(mtm),
+        );
+        let alert = make_switch(mtm, tag::CONVERT_ALERT, false);
+        alert.setToolTip(Some(&ns(alert_tip)));
+        add_control(&options_card, &alert, alert_rect);
         view.addSubview(&options_card);
 
         // Text pair: two multi-line boxes, label above each.
-        const BOX_H: f64 = 96.0;
-        let text_top = 58.0 + 4.0 * ROW_HEIGHT + 12.0 + 16.0;
+        const BOX_H: f64 = 67.0;
+        let text_top = 58.0 + 6.0 * ROW_HEIGHT + 12.0 + 16.0;
         let box_w = card_w - 2.0 * CARD_PAD;
         let text_card = card(
             mtm,
@@ -188,6 +228,12 @@ impl ConvertSection {
                 NSSize::new(110.0, 28.0),
             ),
         );
+        let quick = make_button(mtm, "Chuyển mã nhanh", tag::CONVERT_QUICK);
+        quick.setToolTip(Some(&ns(
+            "Chuyển mã trực tiếp văn bản và HTML trong clipboard.",
+        )));
+        place(&quick, CARD_PAD + 193.0, buttons_y, 148.0, 28.0);
+        text_card.addSubview(&quick);
         let run = make_button(mtm, "Chuyển", tag::CONVERT_RUN);
         run.setToolTip(Some(&ns(RUN_TOOLTIP)));
         add_control(
@@ -200,6 +246,21 @@ impl ConvertSection {
         );
         view.addSubview(&text_card);
 
+        for control in [
+            &hotkey as &objc2_app_kit::NSControl,
+            &clear_hotkey,
+            &alert,
+            &quick,
+        ] {
+            unsafe {
+                control.setTarget(Some(target));
+                control.setAction(Some(sel!(uiAction:)));
+            }
+        }
+        from_popup.setTag(tag::CONVERT_OPTIONS);
+        to_popup.setTag(tag::CONVERT_OPTIONS);
+        case_popup.setTag(tag::CONVERT_OPTIONS);
+        remove_mark.setTag(tag::CONVERT_OPTIONS);
         unsafe {
             from_popup.setTarget(Some(target));
             from_popup.setAction(Some(sel!(uiAction:)));
@@ -225,6 +286,9 @@ impl ConvertSection {
             to_popup,
             case_popup,
             remove_mark,
+            hotkey,
+            clear_hotkey,
+            alert,
             input,
             output,
         }
@@ -260,7 +324,30 @@ impl ConvertSection {
         self.to_popup.selectItemAtIndex(to as isize);
     }
 
-    pub fn refresh(&self, _snap: &UiSnapshot) {}
+    pub fn set_options(&self, options: super::convert_map::ConvertUiOptions) {
+        self.set_from_to(options.from_code, options.to_code);
+        self.case_popup
+            .selectItemAtIndex(options.case_mode as isize);
+        set_switch(&self.remove_mark, options.remove_mark);
+    }
+
+    pub fn set_capturing(&self) {
+        self.hotkey.setTitle(&ns("Nhấn tổ hợp…"));
+    }
+
+    pub fn refresh(&self, snap: &UiSnapshot) {
+        let chord = snap.convert_hotkey.format_symbols();
+        self.hotkey.setTitle(&ns(if chord == "—" {
+            "Ghi phím…"
+        } else {
+            &chord
+        }));
+        self.hotkey
+            .setToolTip(Some(&ns(&snap.convert_hotkey.format_labels())));
+        self.hotkey.setEnabled(snap.tap_ready);
+        self.clear_hotkey.setEnabled(chord != "—");
+        set_switch(&self.alert, snap.convert_alert);
+    }
 }
 
 /// A wrapping, multi-line text box (NSTextField keeps the existing
