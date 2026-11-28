@@ -86,6 +86,26 @@ Feed platform virtual key codes, modifier flags and mouse events to
 `Typing::process_key`. It returns the edit, pass-through, suppression or language
 switch instruction without installing a tap or calling AppKit.
 
+## Windows app
+
+On Windows, build from `rust/`:
+
+```sh
+cargo build --release -p neokey-win
+```
+
+Run `target/release/neokey-win.exe`. The tray icon switches between English
+and Vietnamese. Right-click it for the control panel, macros, clipboard
+conversion and the About dialog. The default language shortcut is **Alt+Z**.
+The app shares the original Windows settings, macros and per-app memory under
+`HKCU\SOFTWARE\TuyenMai\OpenKey`. Run one OpenKey or NeoKey instance at a time.
+When Windows startup is enabled, the shared OpenKey startup entry launches the
+Rust executable. Keep the executable at the registered path.
+
+The update checker reads `latestWinVersion.versionCode` from NeoKey's version
+manifest and opens the releases page when you accept an available update.
+The Windows bindings are target-gated, so the workspace builds and tests on macOS.
+
 ## Safe Rust API
 
 ```rust

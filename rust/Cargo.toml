@@ -1,5 +1,5 @@
 [workspace]
-members = ["neokey-engine", "engine-diff", "neokey-mac", "bench"]
+members = ["neokey-engine", "engine-diff", "neokey-mac", "neokey-win", "bench"]
 resolver = "2"
 
 [profile.release]
