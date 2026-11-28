@@ -5,11 +5,20 @@
 //! plain label), so the state never depends on removing a button border.
 
 use std::cell::Cell;
+use std::ptr::NonNull;
+
+use block2::RcBlock;
 
 use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{sel, MainThreadMarker, Message};
-use objc2_app_kit::{NSBox, NSColor, NSView, NSWindow, NSWindowStyleMask};
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSBox, NSColor, NSView, NSWindow,
+    NSWindowStyleMask, NSWindowWillCloseNotification,
+};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSObjectProtocol, NSPoint, NSRect, NSSize,
+};
 
 use super::section_about::AboutSection;
 use super::section_apps::AppsSection;
@@ -69,6 +78,18 @@ impl SettingsSection {
         }
     }
 
+    /// One-line summary shown when hovering the sidebar item.
+    fn tooltip(self) -> &'static str {
+        match self {
+            Self::General => "Phím tắt chuyển ngôn ngữ, âm báo và các tuỳ chọn nâng cao.",
+            Self::Typing => "Kiểu gõ (Telex, VNI…), bảng mã và các tuỳ chọn chính tả, gõ nhanh.",
+            Self::Macros => "Quản lý chữ tắt: gõ chữ tắt rồi dấu cách để thay bằng cụm đầy đủ.",
+            Self::Apps => "Nhớ ngôn ngữ theo từng ứng dụng và đặt ngôn ngữ riêng cho mỗi ứng dụng.",
+            Self::Convert => "Chuyển văn bản giữa các bảng mã, đổi kiểu chữ hoặc bỏ dấu.",
+            Self::About => "Phiên bản hiện tại, mã nguồn và nơi báo lỗi.",
+        }
+    }
+
     /// ASCII slug used for snapshot file names.
     pub(crate) fn slug(self) -> &'static str {
         match self {
@@ -94,6 +115,8 @@ pub struct SettingsWindow {
     pub convert: ConvertSection,
     about: AboutSection,
     current: Cell<SettingsSection>,
+    /// Returns NeoKey to a menu-bar-only app when the window closes.
+    _close_observer: Retained<ProtocolObject<dyn NSObjectProtocol>>,
 }
 
 impl SettingsWindow {
@@ -112,6 +135,22 @@ impl SettingsWindow {
         unsafe {
             window.setReleasedWhenClosed(false);
         }
+        let on_close = RcBlock::new(move |_: NonNull<NSNotification>| {
+            if let Some(mtm) = MainThreadMarker::new() {
+                NSApplication::sharedApplication(mtm)
+                    .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+            }
+        });
+        // The block only touches AppKit on the main thread (queue: None posts it
+        // synchronously on the closing thread, which is the main thread).
+        let close_observer = unsafe {
+            NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+                Some(NSWindowWillCloseNotification),
+                Some(window.as_ref() as &AnyObject),
+                None,
+                &on_close,
+            )
+        };
 
         // Sidebar: a subtly different background from the content area.
         let sidebar = FlippedView::new(
@@ -161,6 +200,9 @@ impl SettingsWindow {
                 tag::SIDEBAR + i as isize,
                 item_w,
             );
+            // The transparent button overlays the whole row, so its tooltip
+            // covers the icon and title as well.
+            item.button.setToolTip(Some(&ns(section.tooltip())));
             place(
                 &item.view,
                 ITEM_INSET,
@@ -236,6 +278,7 @@ impl SettingsWindow {
             convert,
             about,
             current: Cell::new(SettingsSection::General),
+            _close_observer: close_observer,
         }
     }
 
@@ -244,8 +287,13 @@ impl SettingsWindow {
         let Some(mtm) = MainThreadMarker::new() else {
             return;
         };
-        let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
-        app.activate();
+        let app = NSApplication::sharedApplication(mtm);
+        // A menu-bar-only (accessory) app is often refused activation on macOS
+        // 14+, and AppKit shows tooltips only in the active app. Act as a
+        // regular app while the window is open; the close observer reverts it.
+        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
         self.window.makeKeyAndOrderFront(None);
     }
 

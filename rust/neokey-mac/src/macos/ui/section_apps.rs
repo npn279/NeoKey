@@ -23,6 +23,16 @@ use super::tag;
 use super::UiSnapshot;
 use crate::macos::status_menu::MenuTarget;
 
+/// Shared by the master row's label, hint line and switch. `vRememberCode`
+/// defaults to on, so the stored per-app selection includes the code table.
+const MASTER_TOOLTIP: &str =
+    "Tự nhớ ngôn ngữ và bảng mã dùng gần nhất trong mỗi ứng dụng, rồi tự dùng lại \
+     khi quay về ứng dụng đó.";
+/// Explains the "chế độ tương thích" marker on launcher rows.
+const COMPAT_TOOLTIP: &str =
+    "Chế độ tương thích: ô tìm kiếm của Spotlight, Alfred, Raycast được xử lý bằng cách riêng \
+     để gõ được tiếng Việt.";
+
 /// Resolved once per bundle id and reused across refreshes.
 struct CachedApp {
     name: String,
@@ -48,16 +58,17 @@ impl AppsSection {
 
         // Nhớ theo ứng dụng.
         let master_card = card(mtm, MARGIN, 58.0, card_w, ROW_HEIGHT + 12.0);
-        let master_rect = row_with_hint(
+        let master_rect = row_with_hint_tooltip(
             mtm,
             &master_card,
             6.0,
             "Nhớ ngôn ngữ theo ứng dụng",
             "Tự dùng lại ngôn ngữ gần nhất trong mỗi ứng dụng.",
-            switch_w(mtm),
-            switch_h(mtm),
+            MASTER_TOOLTIP,
+            NSSize::new(switch_w(mtm), switch_h(mtm)),
         );
         let master_switch = make_switch(mtm, tag::SMART_SWITCH, false);
+        master_switch.setToolTip(Some(&ns(MASTER_TOOLTIP)));
         add_control(&master_card, &master_switch, master_rect);
         unsafe {
             master_switch.setTarget(Some(target));
@@ -125,6 +136,11 @@ impl AppsSection {
                 self.list.addSubview(&icon_view);
             }
             let name = label(mtm, &app.name, 13.0, false);
+            let row_tooltip = ns(&format!(
+                "Ngôn ngữ gõ sẽ dùng trong {} khi bật Nhớ ngôn ngữ theo ứng dụng.",
+                app.name
+            ));
+            name.setToolTip(Some(&row_tooltip));
             place(&name, 40.0, y + 5.0, width - 180.0, 18.0);
             self.list.addSubview(&name);
             let mut secondary = bundle.clone();
@@ -132,6 +148,9 @@ impl AppsSection {
                 secondary.push_str(" · chế độ tương thích");
             }
             let sub = label(mtm, &secondary, 11.0, true);
+            if *compat {
+                sub.setToolTip(Some(&ns(COMPAT_TOOLTIP)));
+            }
             place(&sub, 40.0, y + 24.0, width - 180.0, 14.0);
             self.list.addSubview(&sub);
 
@@ -140,6 +159,11 @@ impl AppsSection {
             let vi = neokey_engine::SmartSwitch::language(*stored) != 0;
             let segment = make_lang_segment_small(mtm, tag::APP_LANG + i as isize);
             segment.setSelectedSegment(if vi { 0 } else { 1 });
+            segment.setToolTip(Some(&row_tooltip));
+            segment
+                .setToolTip_forSegment(Some(&ns(&format!("Gõ tiếng Việt trong {}.", app.name))), 0);
+            segment
+                .setToolTip_forSegment(Some(&ns(&format!("Gõ tiếng Anh trong {}.", app.name))), 1);
             place(&segment, width - 132.0, y + 10.0, 120.0, 24.0);
             unsafe {
                 segment.setTarget(Some(target));

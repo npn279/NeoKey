@@ -79,10 +79,36 @@ pub const INPUT_TYPE_LABELS: [&str; 4] = ["Telex", "VNI", "Telex đơn", "Telex 
 pub fn input_type_hint(mode: i64) -> &'static str {
     match mode {
         1 => "a6 → â, o7 → ơ, 1–5 → sắc huyền hỏi ngã nặng",
-        2 | 3 => "Như Telex nhưng không tự biến w thành ư",
+        2 => "Như Telex, nhưng w đứng riêng giữ nguyên là w; không dùng [ ]",
+        3 => "Như Telex (w đứng riêng → ư), chỉ bỏ [ → ơ và ] → ư",
         _ => "aa → â, ow → ơ, s f r x j → sắc huyền hỏi ngã nặng",
     }
 }
+
+/// Longer per-type descriptions shown as tooltips on the input-type pickers.
+/// The two Simple Telex modes differ only in how a standalone `w` is handled
+/// (`Engine.cpp` / `composition.rs`: `vInputType != vSimpleTelex1`).
+/// Full help for the "Kiểu gõ" picker: every type, so they can be compared.
+pub fn input_type_help() -> String {
+    let mut text = String::from("Cách gõ dấu tiếng Việt. Khác nhau giữa các kiểu:");
+    for (name, tip) in INPUT_TYPE_LABELS.iter().zip(INPUT_TYPE_TOOLTIPS) {
+        let tip = tip.strip_prefix(&format!("{name}: ")).unwrap_or(tip);
+        text.push_str(&format!("\n\n• {name}: {}", tip.replace('\n', " ")));
+    }
+    text
+}
+
+pub const INPUT_TYPE_TOOLTIPS: [&str; 4] = [
+    "Telex đầy đủ: aa → â, aw → ă, ow → ơ, uw → ư, dd → đ, w → ư, [ → ơ, ] → ư.\n\
+     Dấu: s f r x j = sắc huyền hỏi ngã nặng, z xoá dấu.",
+    "VNI: 6 → â ê ô, 7 → ơ ư, 8 → ă, 9 → đ.\n\
+     Dấu: 1–5 = sắc huyền hỏi ngã nặng, 0 xoá dấu.",
+    "Telex đơn: như Telex nhưng w đứng riêng KHÔNG thành ư (tw → tw),\n\
+     chỉ aw, ow, uw mới thành ă, ơ, ư. [ ] là dấu ngoặc bình thường.\n\
+     Hợp khi hay gõ tiếng Anh, tên riêng hoặc code có chữ w.",
+    "Telex đơn 2: như Telex, w đứng riêng vẫn thành ư (tw → tư).\n\
+     Chỉ bỏ [ → ơ và ] → ư; [ ] là dấu ngoặc bình thường.",
+];
 
 #[cfg(test)]
 mod tests {
@@ -146,5 +172,21 @@ mod tests {
         }
         .convert("ab");
         assert_eq!(out, "AB");
+    }
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+
+    #[test]
+    fn input_type_help_lists_every_type_once() {
+        let help = input_type_help();
+        for name in INPUT_TYPE_LABELS {
+            assert!(help.contains(&format!("• {name}: ")), "{name} missing");
+        }
+        // The per-type prefix ("Telex đơn: …") is not repeated after the bullet.
+        assert!(!help.contains("Telex đơn: Telex đơn"));
+        assert!(!help.contains('\n') || help.lines().all(|line| !line.starts_with(' ')));
     }
 }

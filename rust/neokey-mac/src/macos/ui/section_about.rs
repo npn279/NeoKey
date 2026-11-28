@@ -31,8 +31,12 @@ impl AboutSection {
         place(&version, center - 120.0, 134.0, 240.0, 18.0);
 
         let repo = make_link_button(mtm, "Mã nguồn trên GitHub", tag::LINK);
+        repo.setToolTip(Some(&ns(
+            "Mở kho mã nguồn NeoKey trên GitHub (npn279/NeoKey).",
+        )));
         place(&repo, center - 170.0, 176.0, 160.0, 28.0);
         let issues = make_link_button(mtm, "Báo lỗi", tag::LINK + 1);
+        issues.setToolTip(Some(&ns("Mở trang báo lỗi của NeoKey trên GitHub.")));
         place(&issues, center + 10.0, 176.0, 120.0, 28.0);
         for btn in [&repo, &issues] {
             unsafe {

@@ -4,6 +4,7 @@
 //! style variants, launch-at-login, and the About-tab update checker.
 
 mod convert_map;
+mod help;
 mod hotkey;
 mod onboarding;
 mod panel;

@@ -104,7 +104,7 @@ impl StatusMenu {
         }
         button.sendActionOn(NSEventMask::LeftMouseUp | NSEventMask::RightMouseUp);
         button.setToolTip(Some(ns_string!(
-            "NeoKey. Click to switch language. Right-click for settings."
+            "NeoKey: bấm để chuyển Việt ↔ English, bấm chuột phải để mở bảng điều khiển"
         )));
         Ok(Self { status, button })
     }

@@ -4,7 +4,7 @@
 //! - One accent color (NeoKey blue, lighter in dark mode); everything else is a
 //!   semantic system color so light/dark mode both stay readable.
 //! - Frame-based layout inside flipped views, driven by [`Stack`], [`card`] and
-//!   [`row`] so spacing math lives only here.
+//!   [`row_with_tooltip`] so spacing math lives only here.
 
 use objc2::rc::Retained;
 use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
@@ -292,28 +292,26 @@ pub fn add_control(card: &FlippedView, control: &NSView, frame: NSRect) {
     card.addSubview(control);
 }
 
-/// Places `text` as a row label and returns the frame for the row's control
-/// (right-aligned inside the card). `y` is the top of a `ROW_HEIGHT` slot.
-pub fn row(
+/// Places `text` as a row label with a tooltip and returns the frame for the
+/// row's control (right-aligned inside the card). `y` is the top of a
+/// `ROW_HEIGHT` slot. Share `tooltip` with the control so hovering either one
+/// explains the same setting.
+pub fn row_with_tooltip(
     mtm: MainThreadMarker,
     card: &FlippedView,
     y: f64,
     text: &str,
+    tooltip: &str,
     control_w: f64,
     control_h: f64,
 ) -> NSRect {
-    let w = card.bounds().size.width;
-    let text_field = label(mtm, text, 14.0, false);
-    place(
-        &text_field,
-        CARD_PAD,
-        y + (ROW_HEIGHT - 20.0) / 2.0,
-        (w - 2.0 * CARD_PAD - control_w - 8.0).max(60.0),
-        20.0,
-    );
-    card.addSubview(&text_field);
-    NSRect::new(
-        NSPoint::new(w - CARD_PAD - control_w, y + (ROW_HEIGHT - control_h) / 2.0),
+    row_impl(
+        mtm,
+        card,
+        y,
+        text,
+        None,
+        Some(tooltip),
         NSSize::new(control_w, control_h),
     )
 }
@@ -332,28 +330,70 @@ pub fn row_separator(mtm: MainThreadMarker, card: &FlippedView, y: f64) {
 }
 
 /// A row whose label carries a secondary hint line directly beneath it; the
-/// control stays vertically centred against the label block. `y` is the top of
-/// a `ROW_HEIGHT` slot. Returns the control frame.
-pub fn row_with_hint(
+/// control stays vertically centred against the label block. Hovering the
+/// label or the hint line shows `tooltip`. `y` is the top of a `ROW_HEIGHT`
+/// slot. Returns the control frame. Takes the control size as one [`NSSize`]
+/// to stay within clippy's argument limit.
+pub fn row_with_hint_tooltip(
     mtm: MainThreadMarker,
     card: &FlippedView,
     y: f64,
     text: &str,
     hint: &str,
-    control_w: f64,
-    control_h: f64,
+    tooltip: &str,
+    control: NSSize,
+) -> NSRect {
+    row_impl(mtm, card, y, text, Some(hint), Some(tooltip), control)
+}
+
+/// Shared layout for the row helpers: adds the label (and the optional hint
+/// line beneath it), attaches `tooltip` to every label field so hovering any
+/// of them shows it, and returns the control frame.
+fn row_impl(
+    mtm: MainThreadMarker,
+    card: &FlippedView,
+    y: f64,
+    text: &str,
+    hint: Option<&str>,
+    tooltip: Option<&str>,
+    control: NSSize,
 ) -> NSRect {
     let w = card.bounds().size.width;
-    let label_w = (w - 2.0 * CARD_PAD - control_w - 8.0).max(60.0);
+    let label_w = (w - 2.0 * CARD_PAD - control.width - 8.0).max(60.0);
     let text_field = label(mtm, text, 14.0, false);
-    place(&text_field, CARD_PAD, y + 5.0, label_w, 18.0);
+    let hint_field = hint.map(|hint| label(mtm, hint, 11.0, true));
+    if let Some(tooltip) = tooltip {
+        let tooltip = ns(tooltip);
+        text_field.setToolTip(Some(&tooltip));
+        if let Some(hint_field) = &hint_field {
+            hint_field.setToolTip(Some(&tooltip));
+        }
+    }
+    if hint.is_some() {
+        place(&text_field, CARD_PAD, y + 5.0, label_w, 18.0);
+        if let Some(hint_field) = &hint_field {
+            place(hint_field, CARD_PAD, y + 24.0, label_w, 14.0);
+            card.addSubview(hint_field);
+        }
+    } else {
+        place(
+            &text_field,
+            CARD_PAD,
+            y + (ROW_HEIGHT - 20.0) / 2.0,
+            label_w,
+            20.0,
+        );
+    }
     card.addSubview(&text_field);
-    let hint_field = label(mtm, hint, 11.0, true);
-    place(&hint_field, CARD_PAD, y + 24.0, label_w, 14.0);
-    card.addSubview(&hint_field);
+    if let Some(tooltip) = tooltip {
+        super::help::add_help(mtm, card, &text_field, tooltip);
+    }
     NSRect::new(
-        NSPoint::new(w - CARD_PAD - control_w, y + (ROW_HEIGHT - control_h) / 2.0),
-        NSSize::new(control_w, control_h),
+        NSPoint::new(
+            w - CARD_PAD - control.width,
+            y + (ROW_HEIGHT - control.height) / 2.0,
+        ),
+        control,
     )
 }
 

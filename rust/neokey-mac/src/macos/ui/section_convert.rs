@@ -6,10 +6,28 @@ use objc2_app_kit::{NSPopUpButton, NSSwitch, NSTextField, NSView};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 use super::convert_map::{CaseMode, CODE_TABLE_LABELS};
+use super::help::add_help;
 use super::style::*;
 use super::tag;
 use super::UiSnapshot;
 use crate::macos::status_menu::MenuTarget;
+
+const FROM_TOOLTIP: &str = "Bảng mã của văn bản gốc cần chuyển.";
+const TO_TOOLTIP: &str = "Bảng mã đích sau khi chuyển.";
+const SWAP_TOOLTIP: &str = "Đảo hai bảng mã: Từ thành Sang và ngược lại.";
+const CASE_TOOLTIP: &str =
+    "Kiểu chữ của kết quả: giữ nguyên, viết hoa hết, viết thường, hoa đầu câu hoặc hoa mỗi từ.";
+/// `remove_mark` outputs the bare base letter (đ → d) and lowercases it unless
+/// a case mode is chosen — verified against `convert.rs` / ConvertTool.cpp.
+const REMOVE_MARK_TOOLTIP: &str =
+    "Bỏ hết dấu tiếng Việt, kể cả đ thành d; kết quả về chữ thường trừ khi chọn kiểu chữ khác. \
+     Vd. Việt Nam → viet nam.";
+const INPUT_TOOLTIP: &str = "Dán hoặc gõ văn bản cần chuyển vào đây.";
+const OUTPUT_TOOLTIP: &str = "Văn bản sau khi chuyển (chỉ đọc); dùng nút Sao chép để lấy kết quả.";
+const PASTE_TOOLTIP: &str = "Dán văn bản từ clipboard vào ô Văn bản gốc rồi chuyển ngay.";
+const COPY_TOOLTIP: &str =
+    "Chuyển văn bản gốc theo các tuỳ chọn hiện tại rồi chép kết quả vào clipboard.";
+const RUN_TOOLTIP: &str = "Chuyển văn bản gốc sang bảng mã đã chọn và hiện ở ô Kết quả.";
 
 pub struct ConvertSection {
     view: Retained<FlippedView>,
@@ -32,21 +50,31 @@ impl ConvertSection {
 
         // Conversion options.
         let options_card = card(mtm, MARGIN, 58.0, card_w, 4.0 * ROW_HEIGHT + 12.0);
-        let from_rect = row(mtm, &options_card, 6.0, "Từ bảng mã", 210.0, 26.0);
+        let from_rect = row_with_tooltip(
+            mtm,
+            &options_card,
+            6.0,
+            "Từ bảng mã",
+            FROM_TOOLTIP,
+            210.0,
+            26.0,
+        );
         let from_popup = NSPopUpButton::new(mtm);
         for label in CODE_TABLE_LABELS {
             from_popup.addItemWithTitle(&ns(label));
         }
+        from_popup.setToolTip(Some(&ns(FROM_TOOLTIP)));
         add_control(&options_card, &from_popup, from_rect);
         row_separator(mtm, &options_card, ROW_HEIGHT + 6.0);
 
         // Same width as "Từ bảng mã" so the two popups line up; the swap icon
         // sits just left of it.
-        let to_rect = row(
+        let to_rect = row_with_tooltip(
             mtm,
             &options_card,
             ROW_HEIGHT + 6.0,
             "Sang bảng mã",
+            TO_TOOLTIP,
             210.0,
             26.0,
         );
@@ -54,9 +82,10 @@ impl ConvertSection {
         for label in CODE_TABLE_LABELS {
             to_popup.addItemWithTitle(&ns(label));
         }
+        to_popup.setToolTip(Some(&ns(TO_TOOLTIP)));
         add_control(&options_card, &to_popup, to_rect);
         let swap = make_icon_button(mtm, "arrow.up.arrow.down", "⇅", tag::CONVERT_SWAP);
-        swap.setToolTip(Some(&ns("Đổi chiều")));
+        swap.setToolTip(Some(&ns(SWAP_TOOLTIP)));
         add_control(
             &options_card,
             &swap,
@@ -67,11 +96,12 @@ impl ConvertSection {
         );
         row_separator(mtm, &options_card, 2.0 * ROW_HEIGHT + 6.0);
 
-        let case_rect = row(
+        let case_rect = row_with_tooltip(
             mtm,
             &options_card,
             2.0 * ROW_HEIGHT + 6.0,
             "Chữ viết",
+            CASE_TOOLTIP,
             210.0,
             26.0,
         );
@@ -79,18 +109,21 @@ impl ConvertSection {
         for mode in CaseMode::ALL {
             case_popup.addItemWithTitle(&ns(mode.label()));
         }
+        case_popup.setToolTip(Some(&ns(CASE_TOOLTIP)));
         add_control(&options_card, &case_popup, case_rect);
         row_separator(mtm, &options_card, 3.0 * ROW_HEIGHT + 6.0);
 
-        let mark_rect = row(
+        let mark_rect = row_with_tooltip(
             mtm,
             &options_card,
             3.0 * ROW_HEIGHT + 6.0,
             "Bỏ dấu",
+            REMOVE_MARK_TOOLTIP,
             switch_w(mtm),
             switch_h(mtm),
         );
         let remove_mark = make_switch(mtm, tag::CONVERT_RUN + 10, false);
+        remove_mark.setToolTip(Some(&ns(REMOVE_MARK_TOOLTIP)));
         add_control(&options_card, &remove_mark, mark_rect);
         view.addSubview(&options_card);
 
@@ -106,10 +139,13 @@ impl ConvertSection {
             2.0 * (24.0 + BOX_H + 8.0) + ROW_HEIGHT + 12.0,
         );
         let input_label = label(mtm, "Văn bản gốc", 13.0, true);
+        input_label.setToolTip(Some(&ns(INPUT_TOOLTIP)));
         place(&input_label, CARD_PAD, 12.0, box_w, 18.0);
         text_card.addSubview(&input_label);
+        add_help(mtm, &text_card, &input_label, INPUT_TOOLTIP);
         let input = multiline_field(mtm, true);
         input.setPlaceholderString(Some(&ns("Dán hoặc gõ văn bản cần chuyển")));
+        input.setToolTip(Some(&ns(INPUT_TOOLTIP)));
         add_control(
             &text_card,
             &input,
@@ -117,9 +153,12 @@ impl ConvertSection {
         );
         let output_top = 34.0 + BOX_H + 8.0;
         let output_label = label(mtm, "Kết quả", 13.0, true);
+        output_label.setToolTip(Some(&ns(OUTPUT_TOOLTIP)));
         place(&output_label, CARD_PAD, output_top + 4.0, box_w, 18.0);
         text_card.addSubview(&output_label);
+        add_help(mtm, &text_card, &output_label, OUTPUT_TOOLTIP);
         let output = multiline_field(mtm, false);
+        output.setToolTip(Some(&ns(OUTPUT_TOOLTIP)));
         add_control(
             &text_card,
             &output,
@@ -133,12 +172,14 @@ impl ConvertSection {
 
         let buttons_y = buttons_top + 8.0;
         let paste = make_button(mtm, "Dán", tag::CONVERT_PASTE);
+        paste.setToolTip(Some(&ns(PASTE_TOOLTIP)));
         add_control(
             &text_card,
             &paste,
             NSRect::new(NSPoint::new(CARD_PAD, buttons_y), NSSize::new(70.0, 28.0)),
         );
         let copy = make_button(mtm, "Sao chép", tag::CONVERT_COPY);
+        copy.setToolTip(Some(&ns(COPY_TOOLTIP)));
         add_control(
             &text_card,
             &copy,
@@ -148,6 +189,7 @@ impl ConvertSection {
             ),
         );
         let run = make_button(mtm, "Chuyển", tag::CONVERT_RUN);
+        run.setToolTip(Some(&ns(RUN_TOOLTIP)));
         add_control(
             &text_card,
             &run,
