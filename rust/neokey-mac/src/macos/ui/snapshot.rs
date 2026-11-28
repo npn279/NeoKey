@@ -40,18 +40,18 @@ pub(crate) fn run(dir: &str, ui: &Ui, refresh: impl Fn()) {
         app.setAppearance(Some(&appearance));
         refresh();
 
-        if let Some(panel_view) = ui.panel.snapshot_view() {
+        if let Some(panel_view) = ui.panel().snapshot_view() {
             panel_view.setAppearance(Some(&appearance));
             render(&panel_view, &format!("{dir}/panel-{suffix}.png"));
         }
-        if let Some(view) = ui.onboarding.snapshot_view() {
+        if let Some(view) = ui.onboarding().snapshot_view() {
             view.setAppearance(Some(&appearance));
             render(&view, &format!("{dir}/onboarding-{suffix}.png"));
         }
-        if let Some(root) = ui.settings.snapshot_view() {
+        if let Some(root) = ui.settings().snapshot_view() {
             root.setAppearance(Some(&appearance));
             for section in SettingsSection::ALL {
-                ui.settings.select(section);
+                ui.settings().select(section);
                 render(
                     &root,
                     &format!("{dir}/settings-{}-{suffix}.png", section.slug()),

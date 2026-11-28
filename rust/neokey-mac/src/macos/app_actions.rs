@@ -31,8 +31,10 @@ pub(super) fn load_convert_options(preferences: &Preferences) -> ConvertUiOption
 
 impl State {
     pub(super) fn save_convert_options(&self) {
-        let Some(ui) = &self.ui else { return };
-        let options = ui.settings.convert.ui_options();
+        let Some(settings) = self.ui.as_ref().and_then(|ui| ui.built_settings()) else {
+            return;
+        };
+        let options = settings.convert.ui_options();
         for (key, value) in [
             (
                 ns_string!("convertToolToAllCaps"),
@@ -71,8 +73,8 @@ impl State {
         alert::defer(|| {
             let Some((options, notify, parent)) = with_state(|state| {
                 state.quick_convert_pending = false;
-                if let Some(ui) = &state.ui {
-                    ui.panel.close();
+                if let Some(panel) = state.ui.as_ref().and_then(|ui| ui.built_panel()) {
+                    panel.close();
                 }
                 (
                     load_convert_options(&state.preferences),
@@ -107,8 +109,8 @@ impl State {
         let status = login_item::status(self.bundle_path.is_some());
         if self.login_status != status {
             self.login_status = status;
-            if let Some(ui) = &self.ui {
-                ui.settings.general.refresh_login(status);
+            if let Some(settings) = self.ui.as_ref().and_then(|ui| ui.built_settings()) {
+                settings.general.refresh_login(status);
             }
         }
     }
@@ -130,8 +132,8 @@ impl State {
                 i64::from(self.login_status == LoginStatus::Enabled),
             );
         }
-        if let Some(ui) = &self.ui {
-            ui.settings.general.refresh_login(self.login_status);
+        if let Some(settings) = self.ui.as_ref().and_then(|ui| ui.built_settings()) {
+            settings.general.refresh_login(self.login_status);
         }
     }
 
@@ -220,6 +222,6 @@ impl State {
     }
 
     fn settings_window(&self) -> Option<Retained<NSWindow>> {
-        Some(self.ui.as_ref()?.settings.window().retain())
+        Some(self.ui.as_ref()?.built_settings()?.window().retain())
     }
 }

@@ -23,9 +23,11 @@ pub use panel::Panel;
 pub use settings_window::{SettingsSection, SettingsWindow};
 
 use neokey_engine::Settings;
+use std::cell::OnceCell;
 use std::rc::Rc;
 
-use objc2::MainThreadMarker;
+use objc2::rc::Retained;
+use objc2::{MainThreadMarker, Message};
 
 use super::status_menu::MenuTarget;
 
@@ -50,42 +52,88 @@ pub struct UiSnapshot {
     pub macros: Vec<(String, String)>,
 }
 
+/// The menu-bar panel, settings window and onboarding window. Each one is
+/// built the first time it is needed: building all three at launch kept tens
+/// of megabytes of AppKit views alive in an app that usually stays hidden.
 pub struct Ui {
-    pub panel: Panel,
-    pub settings: SettingsWindow,
-    pub(crate) onboarding: onboarding::Onboarding,
+    mtm: MainThreadMarker,
+    target: Retained<MenuTarget>,
+    panel: OnceCell<Panel>,
+    settings: OnceCell<SettingsWindow>,
+    onboarding: OnceCell<onboarding::Onboarding>,
 }
 
 impl Ui {
     pub fn new(mtm: MainThreadMarker, target: &MenuTarget) -> Self {
         Self {
-            panel: Panel::new(mtm, target),
-            settings: SettingsWindow::new(mtm, target),
-            onboarding: onboarding::Onboarding::new(mtm, target),
+            mtm,
+            target: target.retain(),
+            panel: OnceCell::new(),
+            settings: OnceCell::new(),
+            onboarding: OnceCell::new(),
         }
     }
 
+    /// The panel, built on first use.
+    pub fn panel(&self) -> &Panel {
+        self.panel
+            .get_or_init(|| Panel::new(self.mtm, &self.target))
+    }
+
+    /// The panel, if it has been built.
+    pub fn built_panel(&self) -> Option<&Panel> {
+        self.panel.get()
+    }
+
+    /// The settings window, built on first use. Callers that build it should
+    /// refresh the UI afterwards so it shows the current state.
+    pub fn settings(&self) -> &SettingsWindow {
+        self.settings
+            .get_or_init(|| SettingsWindow::new(self.mtm, &self.target))
+    }
+
+    /// The settings window, if it has been built.
+    pub fn built_settings(&self) -> Option<&SettingsWindow> {
+        self.settings.get()
+    }
+
+    pub(crate) fn onboarding(&self) -> &onboarding::Onboarding {
+        self.onboarding
+            .get_or_init(|| onboarding::Onboarding::new(self.mtm, &self.target))
+    }
+
+    pub(crate) fn built_onboarding(&self) -> Option<&onboarding::Onboarding> {
+        self.onboarding.get()
+    }
+
+    /// Refreshes whichever windows exist.
     pub fn refresh(&self, snapshot: &UiSnapshot, dark: bool) {
-        self.panel.refresh(snapshot, dark);
-        self.settings.refresh(snapshot, dark);
+        if let Some(panel) = self.built_panel() {
+            panel.refresh(snapshot, dark);
+        }
+        if let Some(settings) = self.built_settings() {
+            settings.refresh(snapshot, dark);
+        }
     }
 
     pub fn show_settings(&self, section: SettingsSection) {
-        self.settings.show(section);
+        self.settings().show(section);
     }
 
     pub fn show_panel(&self, button: &objc2_app_kit::NSStatusBarButton) {
-        self.panel.show(button);
+        self.panel().show(button);
     }
 
     pub fn show_onboarding_if_needed(&self, trusted: bool) {
         if !trusted {
-            self.onboarding.show();
+            self.onboarding().show();
         }
     }
 
     pub fn poll_onboarding(&self, trusted: bool) {
-        self.onboarding.poll(trusted);
+        if let Some(onboarding) = self.built_onboarding() {
+            onboarding.poll(trusted);
+        }
     }
 }
 

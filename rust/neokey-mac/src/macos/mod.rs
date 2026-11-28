@@ -110,9 +110,6 @@ pub fn run() -> Result<(), &'static str> {
         let ui = Rc::new(Ui::new(mtm, &target));
         let spell_preference = settings.vCheckSpelling;
         let convert_hotkey = preferences.get(ns_string!("convertToolHotKey"));
-        ui.settings
-            .convert
-            .set_options(app_actions::load_convert_options(&preferences));
         let login_status = if snapshot_dir.is_none() {
             login_item::status(bundle_path.is_some())
         } else {
@@ -172,6 +169,11 @@ pub fn run() -> Result<(), &'static str> {
                 // Debug-only: render the UI to PNGs and exit before any tap or
                 // onboarding. `refresh` re-resolves the accent per appearance.
                 if let Some(ui) = state.ui.clone() {
+                    ui.panel();
+                    ui.onboarding();
+                    ui.settings()
+                        .convert
+                        .set_options(app_actions::load_convert_options(&state.preferences));
                     ui::snapshot::run(dir, &ui, || state.refresh_ui());
                 }
                 std::process::exit(0);
@@ -293,7 +295,8 @@ impl State {
             if self
                 .ui
                 .as_ref()
-                .is_some_and(|ui| ui.settings.window().isKeyWindow())
+                .and_then(|ui| ui.built_settings())
+                .is_some_and(|settings| settings.window().isKeyWindow())
             {
                 return self.capture_event(kind, event);
             }
@@ -573,9 +576,9 @@ impl State {
                 (bundle.to_string(), stored, compat)
             })
             .collect();
-        ui.settings
-            .apps
-            .refresh_apps(mtm, &self.target, &rows, dark);
+        if let Some(settings) = ui.built_settings() {
+            settings.apps.refresh_apps(mtm, &self.target, &rows, dark);
+        }
     }
 
     fn schedule_ui_refresh(&mut self) {
@@ -596,15 +599,25 @@ impl State {
 
     fn show_settings(&mut self, section: SettingsSection) {
         self.refresh_login();
-        if let Some(ui) = &self.ui {
-            ui.panel.close();
-            ui.show_settings(section);
+        let Some(ui) = self.ui.clone() else {
+            return;
+        };
+        if let Some(panel) = ui.built_panel() {
+            panel.close();
         }
+        if ui.built_settings().is_none() {
+            ui.settings()
+                .convert
+                .set_options(app_actions::load_convert_options(&self.preferences));
+            self.refresh_ui();
+        }
+        ui.show_settings(section);
     }
 
     fn show_panel(&mut self, button: &objc2_app_kit::NSStatusBarButton) {
         self.refresh_login();
         if let Some(ui) = &self.ui {
+            ui.panel();
             self.refresh_ui();
             ui.show_panel(button);
         }
@@ -772,11 +785,11 @@ impl State {
             }
             tag::MACRO_ADD => {
                 if let Some(ui) = &self.ui {
-                    let key = ui.settings.macros.shortcut_text();
-                    let content = ui.settings.macros.content_text();
+                    let key = ui.settings().macros.shortcut_text();
+                    let content = ui.settings().macros.content_text();
                     if !key.is_empty() && !content.is_empty() {
                         self.typing.engine_mut().add_macro(&key, &content);
-                        ui.settings.macros.clear_fields();
+                        ui.settings().macros.clear_fields();
                         self.persist_macros();
                     }
                 }
@@ -802,9 +815,9 @@ impl State {
             tag::CONVERT_COPY => self.convert_copy(),
             tag::CONVERT_SWAP => {
                 if let Some(ui) = &self.ui {
-                    ui.settings
+                    ui.settings()
                         .convert
-                        .set_options(ui.settings.convert.ui_options().swap_tables());
+                        .set_options(ui.settings().convert.ui_options().swap_tables());
                     self.save_convert_options();
                 }
             }
@@ -813,13 +826,13 @@ impl State {
                     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
                 );
                 if let Some(ui) = &self.ui {
-                    ui.onboarding.set_waiting();
+                    ui.onboarding().set_waiting();
                 }
             }
             tag::ONBOARDING_RETRY => {
                 if !accessibility::is_trusted() {
                     if let Some(ui) = &self.ui {
-                        ui.onboarding.set_waiting();
+                        ui.onboarding().set_waiting();
                     }
                     accessibility::prompt_for_permission();
                 }
@@ -891,8 +904,8 @@ impl State {
         self.hotkey_capture = Some((shortcut, HotkeyRecorder::new(beep)));
         if let Some(ui) = &self.ui {
             match shortcut {
-                Shortcut::Language => ui.settings.general.set_capturing(),
-                Shortcut::Convert => ui.settings.convert.set_capturing(),
+                Shortcut::Language => ui.settings().general.set_capturing(),
+                Shortcut::Convert => ui.settings().convert.set_capturing(),
             }
         }
     }
@@ -1142,9 +1155,9 @@ impl State {
         let Some(ui) = &self.ui else {
             return;
         };
-        let text = ui.settings.convert.input_text();
-        let out = ui.settings.convert.ui_options().convert(&text);
-        ui.settings.convert.set_output(&out);
+        let text = ui.settings().convert.input_text();
+        let out = ui.settings().convert.ui_options().convert(&text);
+        ui.settings().convert.set_output(&out);
     }
 
     fn convert_paste(&mut self) {
@@ -1152,7 +1165,7 @@ impl State {
         let pb = NSPasteboard::generalPasteboard();
         if let Some(s) = pb.stringForType(unsafe { objc2_app_kit::NSPasteboardTypeString }) {
             if let Some(ui) = &self.ui {
-                ui.settings.convert.set_input(&s.to_string());
+                ui.settings().convert.set_input(&s.to_string());
                 self.run_convert();
             }
         }
@@ -1163,8 +1176,8 @@ impl State {
         let Some(ui) = &self.ui else {
             return;
         };
-        let text = ui.settings.convert.input_text();
-        let out = ui.settings.convert.ui_options().convert(&text);
+        let text = ui.settings().convert.input_text();
+        let out = ui.settings().convert.ui_options().convert(&text);
         let pb = NSPasteboard::generalPasteboard();
         pb.clearContents();
         let _ = pb.setString_forType(&objc2_foundation::NSString::from_str(&out), unsafe {
@@ -1204,8 +1217,8 @@ impl State {
 
     fn close_settings(&mut self) {
         self.end_hotkey_capture();
-        if let Some(ui) = &self.ui {
-            ui.settings.window().close();
+        if let Some(settings) = self.ui.as_ref().and_then(|ui| ui.built_settings()) {
+            settings.window().close();
         }
     }
 
@@ -1303,7 +1316,8 @@ impl State {
         if self
             .ui
             .as_ref()
-            .is_some_and(|ui| ui.settings.window().isVisible())
+            .and_then(|ui| ui.built_settings())
+            .is_some_and(|settings| settings.window().isVisible())
         {
             self.refresh_login();
         }
