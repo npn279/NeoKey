@@ -2,7 +2,9 @@
 
 A GPL-3.0 port of `Sources/OpenKey/engine`, using the **macOS virtual key codes** from
 `platforms/mac.h`. The engine library has no C++ or third-party dependencies. This workspace also
-includes a native macOS menu bar app that uses the Rust engine.
+includes the native macOS menu bar app and the Windows tray app, both built on the Rust engine.
+They replace the original Objective-C and Win32 C++ apps, which were removed from the repository.
+Only the original C++ engine remains in `Sources/OpenKey/engine`, as the oracle for `engine-diff`.
 
 ## Layout
 
@@ -20,7 +22,9 @@ includes a native macOS menu bar app that uses the Rust engine.
   - `src/ffi.rs`, `include/neokey_engine.h`: C/ObjC bridge. All unsafe Rust is confined to
     FFI modules; the rest of each crate denies unsafe code.
 - `neokey-mac`: native menu bar app and a platform-independent `Typing::process_key`
-  interface for tests and benchmarks.
+  interface for tests.
+- `neokey-win`: Windows tray app (low-level hooks, `SendInput`, Win32 dialogs). Platform-independent
+  key translation, registry model and hotkeys build and are tested on every OS.
 - `engine-diff`: independent original C++ oracle, corpus generator, seeded random tests
   and executable. Only this crate depends on `cc`.
 - `test-c-abi.sh`, `neokey-engine/tests/c_abi.c`: compile, link and execute a real C caller
@@ -81,7 +85,7 @@ selects the composing text with Shift+Left and types its replacement.
 Input-source language changes are picked up by the one-second watchdog.
 Secure Input can prevent global taps from receiving keystrokes.
 
-For callback benchmarks, the library target exports `neokey_mac::typing`.
+For callback tests, the library target exports `neokey_mac::typing`.
 Feed platform virtual key codes, modifier flags and mouse events to
 `Typing::process_key`. It returns the edit, pass-through, suppression or language
 switch instruction without installing a tap or calling AppKit.

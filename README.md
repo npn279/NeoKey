@@ -3,7 +3,7 @@
 
 Bản fork này nằm ở [npn279/NeoKey](https://github.com/npn279/NeoKey), giữ giấy phép GPL-3.0 của OpenKey (Tuyen Mai). Bản **2.0.6** sửa lag khi bật tiếng Việt và lỗi gõ `ồ` thành `oồ` trên Spotlight, Alfred và Raycast. Xem [FIXES.md](FIXES.md).
 
-App native macOS: mở `Sources/OpenKey/macOS/OpenKey.xcodeproj` bằng Xcode trên Mac, Product → Archive. Cloud Agent chạy Linux nên không build được bản này.
+NeoKey đã được viết lại hoàn toàn bằng Rust, cả app macOS (`rust/neokey-mac`) lẫn app Windows (`rust/neokey-win`), dùng chung engine `rust/neokey-engine`. Cách build xem [rust/README.md](rust/README.md) và [macOS_Build.md](macOS_Build.md). Phần dưới đây là giới thiệu gốc của OpenKey.
 ### [Download bản mới nhất](https://github.com/tuyenvm/OpenKey/releases)
 [![GitHub release](https://img.shields.io/github/v/release/tuyenvm/OpenKey.svg)](https://github.com/tuyenvm/OpenKey/releases/latest)
 
@@ -97,8 +97,7 @@ OpenKey cần cấp quyền, vào *System Preferences -> Security & Privacy -> A
 - Fanpage: [https://www.facebook.com/OpenKeyVN](https://www.facebook.com/OpenKeyVN)
 
 ## Liên kết
-- [OpenKey cho Windows, xem chi tiết tại đây](https://github.com/tuyenvm/OpenKey/tree/master/Sources/OpenKey/win32)
-- [OpenKey cho Linux (đang phát triển)](https://github.com/tuyenvm/OpenKey/tree/master/Sources/OpenKey/linux)
+- [OpenKey gốc của Tuyen Mai](https://github.com/tuyenvm/OpenKey)
 ## Một điều nhỏ nhoi
 Đừng quên ủng hộ tác giả bằng cách mua ly cafe cho tác giả tỉnh ngủ nhé:  
 [Buy me a coffee ^^](https://tuyenvm.github.io/donate.html)  

@@ -32,8 +32,7 @@ Các app khác vẫn dùng Backspace như bản gốc.
 
 ## Build trên Mac
 
-1. Mở `Sources/OpenKey/macOS/OpenKey.xcodeproj`.
-2. Product → Archive → Distribute App.
-3. Cấp quyền Accessibility cho app mới, tắt bộ gõ tiếng Việt khác.
+App Objective-C đã được thay bằng bản Rust trong `rust/neokey-mac`, giữ nguyên hai cách xử lý trên. Xem [rust/README.md](rust/README.md):
 
-Máy Linux không build được app native macOS này.
+1. Trong `rust/`, chạy `./neokey-mac/bundle.sh`.
+2. Mở `target/NeoKey.app`, cấp quyền Accessibility, tắt bộ gõ tiếng Việt khác.

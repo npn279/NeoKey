@@ -169,6 +169,29 @@ mod tests {
     }
 
     #[test]
+    fn keeps_text_after_a_caret_in_the_middle() {
+        let mut value: Vec<_> = "ob".encode_utf16().collect();
+        let range = CFRange {
+            location: 1,
+            length: 0,
+        };
+        let caret = replace_units(&mut value, range, 1, &[0x00f4]).unwrap();
+        assert_eq!(String::from_utf16(&value).unwrap(), "ôb");
+        assert_eq!((caret.location, caret.length), (1, 0));
+    }
+
+    #[test]
+    fn refuses_to_delete_past_the_start() {
+        let mut value: Vec<_> = "o".encode_utf16().collect();
+        let range = CFRange {
+            location: 1,
+            length: 0,
+        };
+        assert!(replace_units(&mut value, range, 2, &[0x1ed3]).is_none());
+        assert_eq!(String::from_utf16(&value).unwrap(), "o");
+    }
+
+    #[test]
     fn refuses_a_range_that_splits_a_surrogate_pair() {
         let mut value: Vec<_> = "😀".encode_utf16().collect();
         assert!(replace_units(
