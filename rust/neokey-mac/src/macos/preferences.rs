@@ -83,6 +83,9 @@ impl Preferences {
         for key in TYPING_KEYS {
             self.defaults.removeObjectForKey(&NSString::from_str(key));
         }
+        // FreeMark is a Rust-only setting: the ObjC app always forced it to 0
+        // and never imported it, but resetting defaults must still clear it.
+        self.defaults.removeObjectForKey(ns_string!("FreeMark"));
     }
 
     pub fn integer(&self, key: &NSString, value: i64) {
@@ -181,13 +184,7 @@ mod tests {
                     .integerValue(),
                 2
             );
-            assert_eq!(
-                value(ns_string!("FreeMark"))
-                    .downcast::<NSNumber>()
-                    .unwrap()
-                    .integerValue(),
-                1
-            );
+            assert!(migrated.objectForKey(ns_string!("FreeMark")).is_none());
             assert_eq!(
                 value(ns_string!("macroData")).downcast::<NSData>().unwrap(),
                 legacy_macros
@@ -207,7 +204,6 @@ const TYPING_KEYS: &[&str] = &[
     "SwitchKeyStatus",
     "InputMethod",
     "InputType",
-    "FreeMark",
     "CodeTable",
     "Spelling",
     "ModernOrthography",

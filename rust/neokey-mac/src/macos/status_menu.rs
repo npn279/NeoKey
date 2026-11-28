@@ -85,6 +85,16 @@ define_class!(
                 with_state(|state| state.forget_app(app.processIdentifier()));
             }
         }
+
+        #[unsafe(method(activeSpaceChanged:))]
+        fn active_space_changed(&self, _: &NSNotification) {
+            with_state(|state| state.typing.reset_session());
+        }
+
+        #[unsafe(method(didWake:))]
+        fn did_wake(&self, _: &NSNotification) {
+            with_state(|state| state.typing.reset_session());
+        }
     }
 );
 

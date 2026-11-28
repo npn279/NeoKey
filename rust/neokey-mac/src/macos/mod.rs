@@ -25,8 +25,9 @@ use objc2::rc::{autoreleasepool, Retained};
 use objc2::{sel, MainThreadMarker};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSBeep, NSEvent, NSRunningApplication,
-    NSWorkspace, NSWorkspaceDidActivateApplicationNotification,
-    NSWorkspaceDidTerminateApplicationNotification,
+    NSWorkspace, NSWorkspaceActiveSpaceDidChangeNotification,
+    NSWorkspaceDidActivateApplicationNotification, NSWorkspaceDidTerminateApplicationNotification,
+    NSWorkspaceDidWakeNotification,
 };
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapProxy, CGEventType};
 use objc2_foundation::{ns_string, NSBundle, NSRunLoop, NSRunLoopCommonModes, NSTimer};
@@ -214,6 +215,18 @@ pub fn run() -> Result<(), &'static str> {
                 Some(NSWorkspaceDidTerminateApplicationNotification),
                 None,
             );
+            notifications.addObserver_selector_name_object(
+                &target,
+                sel!(activeSpaceChanged:),
+                Some(NSWorkspaceActiveSpaceDidChangeNotification),
+                None,
+            );
+            notifications.addObserver_selector_name_object(
+                &target,
+                sel!(didWake:),
+                Some(NSWorkspaceDidWakeNotification),
+                None,
+            );
             let timer = NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
                 1.0,
                 &target,
@@ -321,7 +334,6 @@ impl State {
             OutputAction::Pass => true,
             OutputAction::Suppress => false,
             OutputAction::QuickConvert => {
-                self.typing.reset_session();
                 self.schedule_quick_convert();
                 kind == CGEventType::FlagsChanged
             }
@@ -483,7 +495,7 @@ impl State {
     fn select_code_table(&mut self, table: i64) {
         let mut settings = self.typing.engine().settings().clone();
         settings.vCodeTable = table;
-        let remember = settings.vUseSmartSwitchKey != 0 && settings.vRememberCode != 0;
+        let remember = remembers_code_table(&settings);
         self.apply_settings(settings);
         if remember {
             self.remember_selection();
@@ -1313,6 +1325,34 @@ fn relaunch_bundle(path: &Path) -> std::io::Result<Child> {
 
 fn selection(settings: &Settings) -> i32 {
     (settings.vLanguage | (settings.vCodeTable << 1)) as i32
+}
+
+/// ObjC `OnTableCodeChange` remembers the table whenever `vRememberCode` is on,
+/// even when `vUseSmartSwitchKey` is off.
+fn remembers_code_table(settings: &Settings) -> bool {
+    settings.vRememberCode != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_table_memory_only_requires_remember_code() {
+        let settings = Settings {
+            vRememberCode: 1,
+            vUseSmartSwitchKey: 0,
+            ..Settings::default()
+        };
+        assert!(remembers_code_table(&settings));
+
+        let settings = Settings {
+            vRememberCode: 0,
+            vUseSmartSwitchKey: 1,
+            ..Settings::default()
+        };
+        assert!(!remembers_code_table(&settings));
+    }
 }
 
 fn layout_key(event: &CGEvent) -> Option<u16> {
