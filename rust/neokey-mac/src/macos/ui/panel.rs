@@ -3,11 +3,17 @@
 //! Everything heavy lives in the Settings window; the panel keeps only the
 //! language toggle, the input type, the spelling switch, and app exit.
 
+use std::cell::RefCell;
+use std::ptr::NonNull;
+use std::rc::Rc;
+
+use block2::RcBlock;
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2::{sel, MainThreadMarker};
 use objc2_app_kit::{
-    NSColor, NSPopUpButton, NSPopover, NSPopoverBehavior, NSStatusBarButton, NSSwitch,
-    NSViewController,
+    NSColor, NSEvent, NSEventMask, NSPopUpButton, NSPopover, NSPopoverBehavior, NSStatusBarButton,
+    NSSwitch, NSViewController,
 };
 use objc2_foundation::{NSPoint, NSRect, NSRectEdge, NSSize};
 
@@ -23,6 +29,11 @@ pub struct Panel {
     subtitle: Retained<objc2_app_kit::NSTextField>,
     input_popup: Retained<NSPopUpButton>,
     spell_switch: Retained<NSSwitch>,
+    /// Global mouse-down monitor installed while the panel is open. A
+    /// Transient popover only closes when NeoKey resigns active, but macOS 14+
+    /// may refuse to activate a menu-bar app, so clicks in other apps would
+    /// otherwise leave the panel open.
+    outside_click: Rc<RefCell<Option<Retained<AnyObject>>>>,
 }
 
 impl Panel {
@@ -132,12 +143,14 @@ impl Panel {
             subtitle,
             input_popup,
             spell_switch,
+            outside_click: Rc::new(RefCell::new(None)),
         }
     }
 
     pub fn show(&self, button: &NSStatusBarButton) {
         if self.popover.isShown() {
             self.popover.close();
+            remove_monitor(&self.outside_click);
             return;
         }
         // Anchor to the whole button: a rect outside its bounds makes AppKit refuse to show.
@@ -147,6 +160,24 @@ impl Panel {
         }
         self.popover
             .showRelativeToRect_ofView_preferredEdge(bounds, button, NSRectEdge::MinY);
+        self.watch_outside_clicks();
+    }
+
+    /// Closes the panel on the next mouse-down in another app. Global monitors
+    /// never see clicks in NeoKey itself, so the status item still toggles.
+    fn watch_outside_clicks(&self) {
+        remove_monitor(&self.outside_click);
+        let popover = self.popover.clone();
+        let slot = Rc::clone(&self.outside_click);
+        let handler = RcBlock::new(move |_event: NonNull<NSEvent>| {
+            popover.close();
+            remove_monitor(&slot);
+        });
+        let monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+            NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown,
+            &handler,
+        );
+        *self.outside_click.borrow_mut() = monitor;
     }
 
     pub fn refresh(&self, snap: &UiSnapshot, dark: bool) {
@@ -168,5 +199,12 @@ impl Panel {
         self.popover
             .contentViewController()
             .map(|controller| controller.view())
+    }
+}
+
+fn remove_monitor(slot: &RefCell<Option<Retained<AnyObject>>>) {
+    if let Some(monitor) = slot.borrow_mut().take() {
+        // The monitor came from addGlobalMonitorForEventsMatchingMask:handler:.
+        unsafe { NSEvent::removeMonitor(&monitor) };
     }
 }

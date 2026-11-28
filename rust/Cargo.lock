@@ -79,6 +79,7 @@ version = "0.1.0"
 name = "neokey-mac"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "neokey-engine",
  "objc2",
  "objc2-app-kit",
