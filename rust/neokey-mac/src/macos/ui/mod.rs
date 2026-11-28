@@ -17,7 +17,7 @@ mod settings_window;
 pub(crate) mod snapshot;
 pub(crate) mod style;
 
-pub use hotkey::Hotkey;
+pub use hotkey::{Capture, Hotkey, HotkeyRecorder};
 pub use panel::Panel;
 pub use settings_window::{SettingsSection, SettingsWindow};
 

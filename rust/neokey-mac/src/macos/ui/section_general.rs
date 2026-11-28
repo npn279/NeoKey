@@ -128,7 +128,7 @@ impl GeneralSection {
     }
 
     pub fn set_capturing(&self) {
-        self.hotkey_btn.setTitle(&ns("Nhấn tổ hợp phím…"));
+        self.hotkey_btn.setTitle(&ns("Nhấn tổ hợp… (Esc huỷ)"));
     }
 
     pub fn refresh(&self, snap: &UiSnapshot) {

@@ -124,6 +124,76 @@ impl Hotkey {
     }
 }
 
+/// Quartz modifier bits (`CGEventFlags`, same values as `NSEventModifierFlags`).
+const FLAG_SHIFT: u64 = 1 << 17;
+const FLAG_CONTROL: u64 = 1 << 18;
+const FLAG_OPTION: u64 = 1 << 19;
+const FLAG_COMMAND: u64 = 1 << 20;
+const FLAG_MODIFIERS: u64 = FLAG_SHIFT | FLAG_CONTROL | FLAG_OPTION | FLAG_COMMAND;
+const KEY_CODE_ESCAPE: u16 = 53;
+
+/// What one event did to a running hotkey capture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Capture {
+    Pending,
+    Done(Hotkey),
+    Cancel,
+}
+
+/// Records the language-switch chord from raw event-tap events.
+///
+/// Modifier-only chords keep every modifier pressed during the chord, so
+/// releasing ⌃ before ⇧ still records ⌃⇧ (not just the last one held).
+/// A key chord needs ⌃, ⌥ or ⌘: a bare or Shift-only letter would toggle the
+/// language while typing. Esc cancels.
+#[derive(Clone, Copy, Debug)]
+pub struct HotkeyRecorder {
+    seen: u64,
+    beep: bool,
+}
+
+impl HotkeyRecorder {
+    pub fn new(beep: bool) -> Self {
+        Self { seen: 0, beep }
+    }
+
+    pub fn flags_changed(&mut self, flags: u64) -> Capture {
+        let held = flags & FLAG_MODIFIERS;
+        if held != 0 {
+            self.seen |= held;
+            return Capture::Pending;
+        }
+        if self.seen == 0 {
+            return Capture::Pending;
+        }
+        Capture::Done(self.hotkey(MODIFIERS_ONLY as u8, self.seen))
+    }
+
+    pub fn key_down(&mut self, key: u16, flags: u64) -> Capture {
+        let held = flags & FLAG_MODIFIERS;
+        if key == KEY_CODE_ESCAPE && held == 0 {
+            return Capture::Cancel;
+        }
+        if held & !FLAG_SHIFT == 0 || key > 0xff || key == MODIFIERS_ONLY as u16 {
+            // Wait for a real chord; a keystroke also ends any modifier-only try.
+            self.seen = 0;
+            return Capture::Pending;
+        }
+        Capture::Done(self.hotkey(key as u8, held))
+    }
+
+    fn hotkey(&self, key: u8, mods: u64) -> Hotkey {
+        Hotkey {
+            key,
+            control: mods & FLAG_CONTROL != 0,
+            option: mods & FLAG_OPTION != 0,
+            command: mods & FLAG_COMMAND != 0,
+            shift: mods & FLAG_SHIFT != 0,
+            beep: self.beep,
+        }
+    }
+}
+
 fn key_label(code: u8) -> String {
     let code = i64::from(code);
     let letter = [
@@ -216,5 +286,47 @@ mod tests {
         assert!(with_beep.beep);
         assert_eq!(with_beep.key, base.key);
         assert_eq!(with_beep.option, base.option);
+    }
+
+    #[test]
+    fn modifier_only_chord_keeps_modifiers_released_first() {
+        let mut rec = HotkeyRecorder::new(false);
+        assert_eq!(rec.flags_changed(FLAG_CONTROL), Capture::Pending);
+        assert_eq!(
+            rec.flags_changed(FLAG_CONTROL | FLAG_SHIFT),
+            Capture::Pending
+        );
+        // Control released first, Shift still down.
+        assert_eq!(rec.flags_changed(FLAG_SHIFT), Capture::Pending);
+        let Capture::Done(hotkey) = rec.flags_changed(0) else {
+            panic!("chord not finished");
+        };
+        assert_eq!(hotkey.format_symbols(), "⌃⇧");
+        assert_eq!(hotkey.key, MODIFIERS_ONLY as u8);
+    }
+
+    #[test]
+    fn key_chord_needs_a_modifier_and_esc_cancels() {
+        let mut rec = HotkeyRecorder::new(true);
+        assert_eq!(rec.key_down(KEY_Z as u16, 0), Capture::Pending);
+        assert_eq!(rec.key_down(KEY_CODE_ESCAPE, 0), Capture::Cancel);
+        let Capture::Done(hotkey) = rec.key_down(KEY_Z as u16, FLAG_OPTION | (1 << 16)) else {
+            panic!("chord not finished");
+        };
+        assert_eq!(hotkey.format_symbols(), "⌥Z");
+        assert!(hotkey.beep);
+    }
+
+    #[test]
+    fn typing_keys_do_not_become_the_hotkey() {
+        let mut rec = HotkeyRecorder::new(false);
+        rec.flags_changed(FLAG_SHIFT);
+        // Shift+A is just a capital letter: keep waiting, and forget the Shift.
+        assert_eq!(rec.key_down(KEY_A as u16, FLAG_SHIFT), Capture::Pending);
+        assert_eq!(rec.flags_changed(0), Capture::Pending);
+        let Capture::Done(hotkey) = rec.key_down(KEY_A as u16, FLAG_CONTROL | FLAG_SHIFT) else {
+            panic!("chord not finished");
+        };
+        assert_eq!(hotkey.format_symbols(), "⌃⇧A");
     }
 }

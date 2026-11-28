@@ -30,7 +30,7 @@ use self::event_tap::Tap;
 use self::preferences::Preferences;
 use self::startup_accessibility::{Action, StartupAccessibility};
 use self::status_menu::{MenuTarget, StatusMenu};
-use self::ui::{tag, Hotkey, SettingsSection, Ui, UiHandle, UiSnapshot};
+use self::ui::{tag, Capture, Hotkey, HotkeyRecorder, SettingsSection, Ui, UiHandle, UiSnapshot};
 
 const MAX_CACHED_PIDS: usize = 128;
 
@@ -109,7 +109,7 @@ pub fn run() -> Result<(), &'static str> {
                 tap: None,
                 menu,
                 ui: Some(ui),
-                hotkey_capture: false,
+                hotkey_capture: None,
                 target: target_keep,
             }));
         });
@@ -196,13 +196,17 @@ struct State {
     tap: Option<Tap>,
     menu: Option<Rc<StatusMenu>>,
     ui: Option<UiHandle>,
-    hotkey_capture: bool,
+    /// Set while the settings window records a new language-switch chord.
+    hotkey_capture: Option<HotkeyRecorder>,
     target: Retained<MenuTarget>,
 }
 
 impl State {
     fn handle_event(&mut self, proxy: CGEventTapProxy, kind: CGEventType, event: &CGEvent) -> bool {
         let field = |field| CGEvent::integer_value_field(Some(event), field);
+        if self.hotkey_capture.is_some() {
+            return self.capture_event(kind, event);
+        }
         self.focus_pid(field(CGEventField::EventTargetUnixProcessID) as i32);
         let input = match kind {
             CGEventType::KeyDown => {
@@ -697,20 +701,60 @@ impl State {
         }
     }
 
-    fn begin_hotkey_capture(&mut self) {
-        self.hotkey_capture = true;
+    /// Clicking the record button starts a capture; clicking it again cancels.
+    fn toggle_hotkey_capture(&mut self) {
+        if self.hotkey_capture.is_some() || self.tap.is_none() {
+            // Without the event tap (no Accessibility access) nothing can record.
+            self.end_hotkey_capture(None);
+            return;
+        }
+        let beep = Hotkey::from_status(self.typing.engine().settings().vSwitchKeyStatus).beep;
+        self.hotkey_capture = Some(HotkeyRecorder::new(beep));
         if let Some(ui) = &self.ui {
             ui.settings.general.set_capturing();
         }
     }
 
-    fn finish_hotkey_capture(&mut self, chord: Option<Hotkey>) {
+    /// Records the chord from the event tap itself. A nested AppKit event loop
+    /// only sees keys sent to the settings window, and the tap would still act on
+    /// the current hotkey (toggling the language instead of recording it).
+    fn capture_event(&mut self, kind: CGEventType, event: &CGEvent) -> bool {
+        let Some(recorder) = self.hotkey_capture.as_mut() else {
+            return true;
+        };
+        let flags = CGEvent::flags(Some(event)).0;
+        let result = match kind {
+            CGEventType::KeyDown => {
+                if CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat)
+                    != 0
+                {
+                    return false;
+                }
+                let key =
+                    CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventKeycode);
+                recorder.key_down(key as u16, flags)
+            }
+            CGEventType::FlagsChanged => recorder.flags_changed(flags),
+            // Key-ups of recorded keys must not reach the app either.
+            CGEventType::KeyUp => return false,
+            _ => return true,
+        };
+        match result {
+            Capture::Pending => {}
+            Capture::Done(hotkey) => self.end_hotkey_capture(Some(hotkey)),
+            Capture::Cancel => self.end_hotkey_capture(None),
+        }
+        // Modifier changes still pass so no app is left with a stuck modifier.
+        kind == CGEventType::FlagsChanged
+    }
+
+    fn end_hotkey_capture(&mut self, chord: Option<Hotkey>) {
+        self.hotkey_capture = None;
+        // Typing tracked no modifiers during the capture; start it clean.
+        self.typing.reset_after_tap_disable();
         match chord {
             Some(hotkey) => self.apply_hotkey(hotkey),
-            None => {
-                self.hotkey_capture = false;
-                self.refresh_ui();
-            }
+            None => self.refresh_ui(),
         }
     }
 
@@ -721,68 +765,7 @@ impl State {
         self.apply_settings(settings);
         self.preferences
             .integer(ns_string!("SwitchKeyStatus"), status);
-        self.hotkey_capture = false;
         self.refresh_ui();
-    }
-
-    /// Nested event wait with no `State` borrow so the event tap can still call
-    /// `with_state` / `ensure_tap` while the user finishes a chord.
-    fn wait_for_hotkey_chord(beep: bool) -> Option<Hotkey> {
-        use objc2_app_kit::{NSEventMask, NSEventModifierFlags, NSEventType};
-        use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
-
-        let mtm = MainThreadMarker::new()?;
-        let app = NSApplication::sharedApplication(mtm);
-        let mask = NSEventMask::KeyDown | NSEventMask::FlagsChanged;
-        let mut last_mods = (false, false, false, false);
-        let mut saw_modifiers = false;
-        loop {
-            let event = app.nextEventMatchingMask_untilDate_inMode_dequeue(
-                mask,
-                Some(&NSDate::distantFuture()),
-                // NSDefaultRunLoopMode is a Foundation extern static.
-                unsafe { NSDefaultRunLoopMode },
-                true,
-            )?;
-            let flags = event.modifierFlags();
-            let control = flags.contains(NSEventModifierFlags::Control);
-            let option = flags.contains(NSEventModifierFlags::Option);
-            let command = flags.contains(NSEventModifierFlags::Command);
-            let shift = flags.contains(NSEventModifierFlags::Shift);
-            let any = control || option || command || shift;
-            if event.r#type() == NSEventType::FlagsChanged {
-                if any {
-                    last_mods = (control, option, command, shift);
-                    saw_modifiers = true;
-                } else if saw_modifiers {
-                    let (control, option, command, shift) = last_mods;
-                    return Some(Hotkey {
-                        key: 0xfe,
-                        control,
-                        option,
-                        command,
-                        shift,
-                        beep,
-                    });
-                }
-                continue;
-            }
-            if event.r#type() != NSEventType::KeyDown {
-                continue;
-            }
-            let key = event.keyCode() as u8;
-            if key == 53 {
-                return None;
-            }
-            return Some(Hotkey {
-                key,
-                control,
-                option,
-                command,
-                shift,
-                beep,
-            });
-        }
     }
 
     fn apply_typing_toggle(&mut self, id: isize, sender: &objc2_app_kit::NSControl) {

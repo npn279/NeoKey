@@ -8,7 +8,6 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{ns_string, NSNotification, NSTimer};
 
-use super::ui::Hotkey;
 use super::{with_state, State};
 
 define_class!(
@@ -33,17 +32,8 @@ define_class!(
         #[unsafe(method(uiAction:))]
         fn ui_action(&self, sender: &NSControl) {
             let tag = sender.tag();
-            // Hotkey capture must not hold State across nested event waits (event tap
-            // uses try_borrow_mut and would skip ensure_tap while capture runs).
             if tag == super::ui::tag::HOTKEY_CAPTURE {
-                let Some(beep) = with_state(|state| {
-                    state.begin_hotkey_capture();
-                    Hotkey::from_status(state.typing.engine().settings().vSwitchKeyStatus).beep
-                }) else {
-                    return;
-                };
-                let chord = State::wait_for_hotkey_chord(beep);
-                with_state(|state| state.finish_hotkey_capture(chord));
+                with_state(State::toggle_hotkey_capture);
                 return;
             }
             with_state(|state| state.handle_ui_action(tag, sender));
