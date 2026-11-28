@@ -61,11 +61,18 @@ pub fn run() -> Result<(), &'static str> {
         let (preferences, settings) = Preferences::load();
         let target = MenuTarget::new(mtm);
         let target_keep = target.clone();
-        let menu = match StatusMenu::new(mtm, &target) {
-            Ok(menu) => Some(Rc::new(menu)),
-            Err(message) => {
-                eprintln!("{message}");
-                None
+        // Debug-only UI snapshot mode (`NEOKEY_UI_SNAPSHOT=<dir>`): render the
+        // UI to PNGs and exit. No status item, event tap or onboarding.
+        let snapshot_dir = std::env::var("NEOKEY_UI_SNAPSHOT").ok();
+        let menu = if snapshot_dir.is_some() {
+            None
+        } else {
+            match StatusMenu::new(mtm, &target) {
+                Ok(menu) => Some(Rc::new(menu)),
+                Err(message) => {
+                    eprintln!("{message}");
+                    None
+                }
             }
         };
         let ui = Rc::new(Ui::new(mtm, &target));
@@ -113,6 +120,14 @@ pub fn run() -> Result<(), &'static str> {
             }
             state.refresh_ui();
             state.refresh_input_source();
+            if let Some(dir) = &snapshot_dir {
+                // Debug-only: render the UI to PNGs and exit before any tap or
+                // onboarding. `refresh` re-resolves the accent per appearance.
+                if let Some(ui) = state.ui.clone() {
+                    ui::snapshot::run(dir, &ui, || state.refresh_ui());
+                }
+                std::process::exit(0);
+            }
             if trusted_at_launch {
                 state.install_tap();
             } else {
@@ -413,11 +428,6 @@ impl State {
             layout_compat: self.preferences.layout_compat,
             chromium_fix: self.preferences.chromium_fix,
             hotkey: Hotkey::from_status(self.typing.engine().settings().vSwitchKeyStatus),
-            focus_app: self
-                .focus
-                .as_ref()
-                .and_then(|f| f.id.as_ref().map(|s| s.to_string())),
-            focus_launcher: self.focus.as_ref().is_some_and(|f| f.launcher),
             macros,
         }
     }
@@ -430,10 +440,12 @@ impl State {
             return;
         };
         let snap = self.ui_snapshot();
-        ui.refresh(&snap);
         let Some(mtm) = MainThreadMarker::new() else {
             return;
         };
+        // Re-resolve the accent on every refresh so light/dark switches stick.
+        let dark = ui::style::is_dark(&NSApplication::sharedApplication(mtm).effectiveAppearance());
+        ui.refresh(&snap, dark);
         let rows: Vec<_> = self
             .smart_switch
             .iter()
@@ -442,7 +454,9 @@ impl State {
                 (bundle.to_string(), stored, compat)
             })
             .collect();
-        ui.settings.apps.refresh_apps(mtm, &self.target, &rows);
+        ui.settings
+            .apps
+            .refresh_apps(mtm, &self.target, &rows, dark);
     }
 
     fn show_panel(&self, button: &objc2_app_kit::NSStatusBarButton) {
@@ -468,12 +482,18 @@ impl State {
     }
 
     fn handle_ui_action(&mut self, tag: isize, sender: &objc2_app_kit::NSControl) {
-        use objc2_app_kit::{NSApplication, NSPopUpButton, NSSwitch, NSWorkspace};
+        use objc2_app_kit::{
+            NSApplication, NSPopUpButton, NSSegmentedControl, NSSwitch, NSWorkspace,
+        };
         use objc2_foundation::NSURL;
 
         match tag {
-            tag::LANG_VI => self.set_language(true),
-            tag::LANG_EN => self.set_language(false),
+            tag::LANG_SEGMENT => {
+                if let Some(segment) = sender.downcast_ref::<NSSegmentedControl>() {
+                    let vi = segment.selectedSegment() == 0;
+                    self.set_language(vi);
+                }
+            }
             tag::QUIT => {
                 self.shutdown();
                 let mtm = MainThreadMarker::new().expect("main thread");
@@ -482,16 +502,6 @@ impl State {
             tag::GEAR => {
                 if let Some(ui) = &self.ui {
                     ui.show_settings(SettingsSection::General);
-                }
-            }
-            tag::OPEN_MACROS => {
-                if let Some(ui) = &self.ui {
-                    ui.show_settings(SettingsSection::Macros);
-                }
-            }
-            tag::OPEN_CONVERT => {
-                if let Some(ui) = &self.ui {
-                    ui.show_settings(SettingsSection::Convert);
                 }
             }
             tag::PANEL_SPELL => {
@@ -506,7 +516,7 @@ impl State {
                     self.refresh_ui();
                 }
             }
-            tag::PANEL_SMART => {
+            tag::SMART_SWITCH => {
                 if let Some(sw) = sender.downcast_ref::<NSSwitch>() {
                     let on = sw.state() == objc2_app_kit::NSControlStateValueOn;
                     let mut settings = self.typing.engine().settings().clone();
@@ -523,8 +533,16 @@ impl State {
                     self.select_code_table(pop.indexOfSelectedItem() as i64);
                 }
             }
-            t if (tag::INPUT_TYPE..tag::INPUT_TYPE + 4).contains(&t) => {
-                self.select_input_type((t - tag::INPUT_TYPE) as i64);
+            tag::INPUT_TYPE => {
+                // The panel uses a popup, the settings window a segmented control.
+                let mode = if let Some(pop) = sender.downcast_ref::<NSPopUpButton>() {
+                    pop.indexOfSelectedItem() as i64
+                } else if let Some(segment) = sender.downcast_ref::<NSSegmentedControl>() {
+                    segment.selectedSegment() as i64
+                } else {
+                    return;
+                };
+                self.select_input_type(mode);
             }
             t if (tag::SIDEBAR..tag::SIDEBAR + 6).contains(&t) => {
                 if let Some(ui) = &self.ui {
@@ -581,15 +599,6 @@ impl State {
                     if !key.is_empty() && !content.is_empty() {
                         self.typing.engine_mut().add_macro(&key, &content);
                         ui.settings.macros.clear_fields();
-                        self.persist_macros();
-                    }
-                }
-            }
-            tag::MACRO_DELETE => {
-                if let Some(ui) = &self.ui {
-                    let key = ui.settings.macros.shortcut_text();
-                    if !key.is_empty() {
-                        self.typing.engine_mut().delete_macro(&key);
                         self.persist_macros();
                     }
                 }
@@ -656,27 +665,28 @@ impl State {
                 );
             }
             t if (tag::APP_LANG..tag::APP_LANG + 2000).contains(&t) => {
-                let bundles: Vec<_> = self
-                    .smart_switch
-                    .iter()
-                    .map(|(b, _)| b.to_string())
-                    .collect();
-                let slot = (t - tag::APP_LANG) as usize;
-                let bundle_idx = slot / 2;
-                if let Some(bundle) = bundles.get(bundle_idx) {
-                    let lang = i64::from(slot.is_multiple_of(2));
-                    let stored = self
+                if let Some(segment) = sender.downcast_ref::<NSSegmentedControl>() {
+                    let bundles: Vec<_> = self
                         .smart_switch
                         .iter()
-                        .find(|(b, _)| *b == bundle.as_str())
-                        .map(|(_, v)| v)
-                        .unwrap_or(0);
-                    let table = SmartSwitch::code_table(stored);
-                    self.smart_switch
-                        .set(bundle, SmartSwitch::packed(lang, table));
-                    self.smart_dirty = true;
-                    self.flush_preferences();
-                    self.refresh_ui();
+                        .map(|(b, _)| b.to_string())
+                        .collect();
+                    let bundle_idx = (t - tag::APP_LANG) as usize;
+                    if let Some(bundle) = bundles.get(bundle_idx) {
+                        let lang = i64::from(segment.selectedSegment() == 0);
+                        let stored = self
+                            .smart_switch
+                            .iter()
+                            .find(|(b, _)| *b == bundle.as_str())
+                            .map(|(_, v)| v)
+                            .unwrap_or(0);
+                        let table = SmartSwitch::code_table(stored);
+                        self.smart_switch
+                            .set(bundle, SmartSwitch::packed(lang, table));
+                        self.smart_dirty = true;
+                        self.flush_preferences();
+                        self.refresh_ui();
+                    }
                 }
             }
             _ => {

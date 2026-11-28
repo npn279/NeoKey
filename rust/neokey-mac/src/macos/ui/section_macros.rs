@@ -1,6 +1,9 @@
+//! Gõ tắt (macros): add form in a card, the macro list in a scrolling card.
+
 use objc2::rc::Retained;
 use objc2::{sel, MainThreadMarker};
-use objc2_app_kit::{NSBorderType, NSScrollView, NSTextField, NSView};
+use objc2_app_kit::{NSColor, NSScrollView, NSScrollerStyle, NSTextField, NSView};
+use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 use super::style::*;
 use super::tag;
@@ -12,77 +15,127 @@ pub struct MacrosSection {
     shortcut: Retained<NSTextField>,
     content: Retained<NSTextField>,
     list: Retained<FlippedView>,
-    scroll: Retained<NSScrollView>,
+    empty: Retained<NSTextField>,
 }
 
 impl MacrosSection {
     pub fn build(mtm: MainThreadMarker, target: &MenuTarget, w: f64, h: f64) -> Self {
-        let view = FlippedView::new(
-            mtm,
-            objc2_foundation::NSRect::new(
-                objc2_foundation::NSPoint::new(0.0, 0.0),
-                objc2_foundation::NSSize::new(w, h),
-            ),
-        );
-        let title = title_label(mtm, "Gõ tắt", 22.0);
-        place(&title, 24.0, 16.0, 200.0, 30.0);
+        let view = FlippedView::new(mtm, NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(w, h)));
+        let title = section_title(mtm, "Gõ tắt");
+        place(&title, MARGIN, 18.0, w - 2.0 * MARGIN, 26.0);
         view.addSubview(&title);
 
         let hint = label(
             mtm,
-            "Gõ chữ tắt rồi nhấn dấu cách, NeoKey sẽ thay bằng cụm đầy đủ.",
+            "Gõ chữ tắt rồi nhấn dấu cách để thay bằng cụm đầy đủ.",
+            12.0,
+            true,
+        );
+        place(&hint, MARGIN, 50.0, w - 2.0 * MARGIN, 16.0);
+        view.addSubview(&hint);
+
+        let card_w = w - 2.0 * MARGIN;
+        let card_h = 3.0 * ROW_HEIGHT + 12.0;
+        let form_card = card(mtm, MARGIN, 74.0, card_w, card_h);
+
+        // Both fields start at the same x; the shortcut field is just shorter.
+        let field_x = CARD_PAD + 110.0;
+        let field_w = card_w - field_x - CARD_PAD;
+        let mut shortcut_rect = row(mtm, &form_card, 6.0, "Chữ tắt", field_w, 28.0);
+        shortcut_rect.size.width = 180.0;
+        let shortcut = NSTextField::new(mtm);
+        shortcut.setPlaceholderString(Some(&ns("vd: vn")));
+        add_control(&form_card, &shortcut, shortcut_rect);
+        row_separator(mtm, &form_card, ROW_HEIGHT + 6.0);
+        let content_rect = row(
+            mtm,
+            &form_card,
+            ROW_HEIGHT + 6.0,
+            "Thay bằng",
+            field_w,
+            28.0,
+        );
+        let content = NSTextField::new(mtm);
+        content.setPlaceholderString(Some(&ns("vd: Việt Nam")));
+        add_control(&form_card, &content, content_rect);
+        row_separator(mtm, &form_card, 2.0 * ROW_HEIGHT + 6.0);
+
+        // Action row: import/export on the left, the primary "Thêm" on the right.
+        // Deleting is per row in the list below.
+        let buttons_y = 2.0 * ROW_HEIGHT + 6.0 + 8.0;
+        let import_btn = make_button(mtm, "Nhập…", tag::MACRO_IMPORT);
+        add_control(
+            &form_card,
+            &import_btn,
+            NSRect::new(NSPoint::new(CARD_PAD, buttons_y), NSSize::new(84.0, 28.0)),
+        );
+        let export_btn = make_button(mtm, "Xuất…", tag::MACRO_EXPORT);
+        add_control(
+            &form_card,
+            &export_btn,
+            NSRect::new(
+                NSPoint::new(CARD_PAD + 92.0, buttons_y),
+                NSSize::new(84.0, 28.0),
+            ),
+        );
+        let add = make_button(mtm, "Thêm", tag::MACRO_ADD);
+        add_control(
+            &form_card,
+            &add,
+            NSRect::new(
+                NSPoint::new(card_w - CARD_PAD - 90.0, buttons_y),
+                NSSize::new(90.0, 28.0),
+            ),
+        );
+        view.addSubview(&form_card);
+
+        // Macro list in a scrolling card.
+        let list_top = 74.0 + card_h + 16.0;
+        let list_h = h - list_top - MARGIN;
+        let list_card = card(mtm, MARGIN, list_top, card_w, list_h);
+        let scroll = NSScrollView::new(mtm);
+        place(&scroll, 0.0, 0.0, card_w, list_h);
+        scroll.setHasVerticalScroller(true);
+        scroll.setDrawsBackground(false);
+        scroll.setScrollerStyle(NSScrollerStyle::Overlay);
+        let list = FlippedView::new(
+            mtm,
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(card_w, 1.0)),
+        );
+        scroll.setDocumentView(Some(&list));
+        list_card.addSubview(&scroll);
+        let empty = label(
+            mtm,
+            "Chưa có gõ tắt nào. Thêm một chữ tắt ở trên.",
             13.0,
             true,
         );
-        place(&hint, 24.0, 48.0, w - 48.0, 18.0);
-        view.addSubview(&hint);
-
-        let shortcut = NSTextField::new(mtm);
-        shortcut.setPlaceholderString(Some(&ns("vd: vn")));
-        place(&shortcut, 24.0, 80.0, 140.0, 28.0);
-        let content = NSTextField::new(mtm);
-        content.setPlaceholderString(Some(&ns("vd: Việt Nam")));
-        place(&content, 176.0, 80.0, w - 420.0, 28.0);
-
-        let add = make_button(mtm, "Thêm", tag::MACRO_ADD);
-        let del = make_button(mtm, "Xóa", tag::MACRO_DELETE);
-        let import_btn = make_button(mtm, "Nhập…", tag::MACRO_IMPORT);
-        let export_btn = make_button(mtm, "Xuất…", tag::MACRO_EXPORT);
-        place(&add, w - 280.0, 78.0, 60.0, 28.0);
-        place(&del, w - 210.0, 78.0, 60.0, 28.0);
-        place(&import_btn, w - 140.0, 78.0, 60.0, 28.0);
-        place(&export_btn, w - 70.0, 78.0, 60.0, 28.0);
-        for btn in [&add, &del, &import_btn, &export_btn] {
-            unsafe {
-                btn.setTarget(Some(target));
-                btn.setAction(Some(sel!(uiAction:)));
-            }
-            view.addSubview(btn);
-        }
-
-        let scroll = NSScrollView::new(mtm);
-        place(&scroll, 24.0, 120.0, w - 48.0, h - 140.0);
-        scroll.setHasVerticalScroller(true);
-        scroll.setBorderType(NSBorderType::LineBorder);
-        let list = FlippedView::new(
-            mtm,
-            objc2_foundation::NSRect::new(
-                objc2_foundation::NSPoint::new(0.0, 0.0),
-                objc2_foundation::NSSize::new(w - 48.0, 40.0),
-            ),
+        empty.setAlignment(objc2_app_kit::NSTextAlignment::Center);
+        place(
+            &empty,
+            CARD_PAD,
+            (list_h - 20.0) / 2.0,
+            card_w - 2.0 * CARD_PAD,
+            20.0,
         );
-        scroll.setDocumentView(Some(&list));
+        list_card.addSubview(&empty);
+        view.addSubview(&list_card);
 
-        view.addSubview(&shortcut);
-        view.addSubview(&content);
-        view.addSubview(&scroll);
+        unsafe {
+            import_btn.setTarget(Some(target));
+            import_btn.setAction(Some(sel!(uiAction:)));
+            export_btn.setTarget(Some(target));
+            export_btn.setAction(Some(sel!(uiAction:)));
+            add.setTarget(Some(target));
+            add.setAction(Some(sel!(uiAction:)));
+        }
 
         Self {
             view,
             shortcut,
             content,
             list,
-            scroll,
+            empty,
         }
     }
 
@@ -111,15 +164,17 @@ impl MacrosSection {
         for view in self.list.subviews() {
             view.removeFromSuperview();
         }
-        let width = self.scroll.bounds().size.width.max(1.0);
+        self.empty.setHidden(!snap.macros.is_empty());
+        let width = self.list.bounds().size.width.max(1.0);
         for (i, (key, value)) in snap.macros.iter().enumerate() {
-            let y = i as f64 * 36.0;
+            let y = i as f64 * ROW_HEIGHT;
             let key_lab = label(mtm, key, 13.0, false);
-            place(&key_lab, 12.0, y + 8.0, 120.0, 20.0);
+            place(&key_lab, CARD_PAD, y + 12.0, 140.0, 20.0);
             let val_lab = label(mtm, value, 13.0, false);
-            place(&val_lab, 140.0, y + 8.0, width - 220.0, 20.0);
+            place(&val_lab, 164.0, y + 12.0, width - 254.0, 20.0);
             let del = make_quiet_button(mtm, "Xóa", tag::MACRO_ROW_DELETE + i as isize);
-            place(&del, width - 64.0, y + 4.0, 52.0, 28.0);
+            place(&del, width - CARD_PAD - 56.0, y + 8.0, 56.0, 28.0);
+            del.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
             unsafe {
                 del.setTarget(Some(target));
                 del.setAction(Some(sel!(uiAction:)));
@@ -127,10 +182,20 @@ impl MacrosSection {
             self.list.addSubview(&key_lab);
             self.list.addSubview(&val_lab);
             self.list.addSubview(&del);
+            if i + 1 < snap.macros.len() {
+                let separator = separator_box(
+                    mtm,
+                    NSRect::new(
+                        NSPoint::new(CARD_PAD, y + ROW_HEIGHT - 0.5),
+                        NSSize::new(width - 2.0 * CARD_PAD, 1.0),
+                    ),
+                );
+                self.list.addSubview(&separator);
+            }
         }
-        self.list.setFrameSize(objc2_foundation::NSSize::new(
+        self.list.setFrameSize(NSSize::new(
             width,
-            (snap.macros.len().max(1) as f64) * 36.0,
+            snap.macros.len().max(1) as f64 * ROW_HEIGHT,
         ));
     }
 }

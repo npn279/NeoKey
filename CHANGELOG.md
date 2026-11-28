@@ -1,6 +1,7 @@
 # OpenKey Change Log
 
 ##### Chưa phát hành
+- macOS: NeoKey (bản Rust) làm lại giao diện: bảng nhanh gọn hơn (Việt/English, kiểu gõ, kiểm tra chính tả), nền đặc dễ đọc; cửa sổ Cài đặt nhóm thành thẻ, một màu nhấn, hỗ trợ chế độ tối, danh sách Theo ứng dụng hiện tên và biểu tượng app. Sửa lỗi thiếu công tắc "Nhớ ngôn ngữ theo ứng dụng".
 - macOS: NeoKey (bản Rust) có bảng điều khiển mới: bấm chuột phải vào biểu tượng để mở bảng nhanh, cửa sổ Cài đặt có các mục Chung, Kiểu gõ, Gõ tắt, Theo ứng dụng, Chuyển mã, Giới thiệu, và màn hình hướng dẫn cấp quyền Trợ năng.
 - macOS: NeoKey (bản Rust) gửi ký tự thay thế bằng mã phím không có trên bàn phím ANSI thay vì mã phím của A, sửa lỗi gõ "nữa" thành "ữa" trong app Claude khi chưa nhả phím A.
 - macOS: NeoKey (bản Rust) tự khởi động lại một lần khi được cấp quyền Trợ năng để gõ dấu trong Spotlight, Alfred và Raycast.

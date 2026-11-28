@@ -14,7 +14,8 @@ mod section_general;
 mod section_macros;
 mod section_typing;
 mod settings_window;
-mod style;
+pub(crate) mod snapshot;
+pub(crate) mod style;
 
 pub use hotkey::Hotkey;
 pub use panel::Panel;
@@ -36,9 +37,6 @@ pub struct UiSnapshot {
     pub layout_compat: bool,
     pub chromium_fix: bool,
     pub hotkey: Hotkey,
-    pub focus_app: Option<String>,
-    #[allow(dead_code)]
-    pub focus_launcher: bool,
     pub macros: Vec<(String, String)>,
 }
 
@@ -57,9 +55,9 @@ impl Ui {
         }
     }
 
-    pub fn refresh(&self, snapshot: &UiSnapshot) {
-        self.panel.refresh(snapshot);
-        self.settings.refresh(snapshot);
+    pub fn refresh(&self, snapshot: &UiSnapshot, dark: bool) {
+        self.panel.refresh(snapshot, dark);
+        self.settings.refresh(snapshot, dark);
     }
 
     pub fn show_settings(&self, section: SettingsSection) {
@@ -83,25 +81,36 @@ impl Ui {
 
 /// Action tags shared by panel and settings (`MenuTarget::uiAction:`).
 pub mod tag {
+    // Panel.
+    /// Gear icon and "Cài đặt…" footer button (both open Settings).
     pub const GEAR: isize = 1;
-    pub const LANG_VI: isize = 2;
-    pub const LANG_EN: isize = 3;
-    pub const INPUT_TYPE: isize = 10;
-    pub const CODE_TABLE: isize = 20;
+    /// Panel Việt / English segmented control; segment 0 is Việt.
+    pub const LANG_SEGMENT: isize = 2;
+    /// Panel spelling switch.
     pub const PANEL_SPELL: isize = 21;
-    pub const PANEL_SMART: isize = 22;
-    pub const OPEN_MACROS: isize = 30;
-    pub const OPEN_CONVERT: isize = 31;
     pub const QUIT: isize = 32;
+
+    // Panel and Settings.
+    /// Input type: panel `NSPopUpButton` and settings `NSSegmentedControl`
+    /// both send this; the handler reads either `selectedSegment` or the
+    /// popup's selected index as the mode.
+    pub const INPUT_TYPE: isize = 10;
+    /// Settings code-table popup.
+    pub const CODE_TABLE: isize = 20;
+    /// Settings "Nhớ ngôn ngữ theo ứng dụng" switch.
+    pub const SMART_SWITCH: isize = 22;
+
+    // Settings.
     pub const SIDEBAR: isize = 100;
     pub const HOTKEY_CAPTURE: isize = 110;
     pub const HOTKEY_BEEP: isize = 111;
     pub const SETTING: isize = 200;
     pub const MACRO_ADD: isize = 300;
-    pub const MACRO_DELETE: isize = 301;
     pub const MACRO_IMPORT: isize = 302;
     pub const MACRO_EXPORT: isize = 303;
     pub const MACRO_ROW_DELETE: isize = 310;
+    /// Per-app rows in Settings → Theo ứng dụng; the row index is the tag
+    /// offset, read through `selectedSegment` (0 = Việt).
     pub const APP_LANG: isize = 400;
     pub const CONVERT_RUN: isize = 500;
     pub const CONVERT_PASTE: isize = 501;

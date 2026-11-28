@@ -13,6 +13,7 @@ pub struct Onboarding {
 
 impl Onboarding {
     pub fn new(mtm: MainThreadMarker, target: &MenuTarget) -> Self {
+        let dark = is_dark(&NSApplication::sharedApplication(mtm).effectiveAppearance());
         let rect = objc2_foundation::NSRect::new(
             objc2_foundation::NSPoint::new(0.0, 0.0),
             objc2_foundation::NSSize::new(ONBOARDING_WIDTH, ONBOARDING_HEIGHT),
@@ -38,7 +39,7 @@ impl Onboarding {
         );
         place(&body, 56.0, 80.0, ONBOARDING_WIDTH - 112.0, 20.0);
 
-        let open = make_accent_button(mtm, "Mở Cài đặt", tag::ONBOARDING_OPEN);
+        let open = make_accent_button(mtm, "Mở Cài đặt", tag::ONBOARDING_OPEN, dark);
         place(&open, ONBOARDING_WIDTH - 220.0, 160.0, 140.0, 38.0);
         let retry = make_button(mtm, "Kiểm tra lại", tag::ONBOARDING_RETRY);
         let quit = make_button(mtm, "Thoát", tag::ONBOARDING_QUIT);
@@ -97,8 +98,13 @@ impl Onboarding {
     }
 }
 
-fn make_accent_button(mtm: MainThreadMarker, title: &str, tag: isize) -> Retained<NSButton> {
+fn make_accent_button(
+    mtm: MainThreadMarker,
+    title: &str,
+    tag: isize,
+    dark: bool,
+) -> Retained<NSButton> {
     let button = make_button(mtm, title, tag);
-    button.setContentTintColor(Some(&accent_color()));
+    button.setContentTintColor(Some(&accent_color(dark)));
     button
 }
