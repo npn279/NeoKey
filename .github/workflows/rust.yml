@@ -1,0 +1,45 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main", "rust-port" ]
+    paths: [ "rust/**", "Sources/OpenKey/engine/**", ".github/workflows/rust.yml" ]
+  pull_request:
+    branches: [ "main" ]
+    paths: [ "rust/**", "Sources/OpenKey/engine/**", ".github/workflows/rust.yml" ]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test workspace
+        run: cargo test --locked --workspace
+      - name: Clippy
+        run: cargo clippy --locked -p neokey-engine -p neokey-mac -- -D warnings
+      - name: Differential test against the original C++ engine
+        run: cargo run --locked --release -p engine-diff
+      - name: Bundle NeoKey.app
+        run: ./neokey-mac/bundle.sh
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Windows app logic
+        run: cargo test --locked -p neokey-win
+      - name: Clippy
+        run: cargo clippy --locked -p neokey-win -- -D warnings
+      - name: Build release
+        run: cargo build --locked --release -p neokey-win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neokey-win
+          path: rust/target/release/neokey-win.exe
